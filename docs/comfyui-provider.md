@@ -8,7 +8,7 @@ The API can load this adapter with:
 ```powershell
 $env:MEDIAFORGE_PROVIDER = "comfyui"
 $env:COMFYUI_BASE_URL = "http://127.0.0.1:8188"
-$env:COMFYUI_WORKFLOW_PATH = "data/workflows/comfyui_image_workflow.json"
+$env:COMFYUI_WORKFLOW_PATH = "D:\secure-config\reviewed-comfyui-image-workflow.json"
 uvicorn mediaforge_p1.api:app --host 127.0.0.1 --port 8020
 ```
 

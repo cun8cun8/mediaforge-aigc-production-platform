@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/cun8cun8/mediaforge-aigc-production-platform/security/advisories/new
+    about: Report security issues privately. Do not include sensitive details in public issues.
+  - name: Documentation and architecture
+    url: https://github.com/cun8cun8/mediaforge-aigc-production-platform/tree/main/docs
+    about: Review the architecture, configuration and deployment references before opening an issue.
