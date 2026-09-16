@@ -13,6 +13,6 @@
     "test:ui:vector": "node tests/ui_vector_smoke.cjs"
   },
   "devDependencies": {
-    "playwright": "1.57.0"
+    "playwright": "1.63.0"
   }
 }
