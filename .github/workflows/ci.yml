@@ -96,7 +96,7 @@ jobs:
           npm run test:ui:planning
       - name: Upload UI evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ui-acceptance-${{ github.run_id }}
           path: |
