@@ -1,0 +1,18 @@
+{
+  "name": "mediaforge-ui-acceptance",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Reproducible browser acceptance tooling for MediaForge.",
+  "scripts": {
+    "install:browsers": "playwright install chromium",
+    "test:ui": "node tests/ui_smoke.cjs",
+    "test:ui:workflow": "node tests/ui_workflow_smoke.cjs",
+    "test:ui:audit": "node tests/ui_audit_smoke.cjs",
+    "test:ui:narrative": "node tests/ui_narrative_smoke.cjs",
+    "test:ui:planning": "node tests/ui_planning_smoke.cjs",
+    "test:ui:vector": "node tests/ui_vector_smoke.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.57.0"
+  }
+}

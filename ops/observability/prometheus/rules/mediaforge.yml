@@ -1,0 +1,55 @@
+groups:
+  - name: mediaforge-availability
+    rules:
+      - alert: MediaForgeTargetDown
+        expr: up{job="mediaforge"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: MediaForge metrics target is unavailable.
+          runbook: Check the gateway or active control-plane health endpoint.
+
+      - alert: MediaForgeCriticalOperationsAlert
+        expr: mediaforge_operations_alerts_active{severity="critical"} > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: MediaForge reports one or more critical operations alerts.
+          runbook: Inspect GET /ops/alerts and the production readiness report.
+
+      - alert: MediaForgeWarningOperationsAlert
+        expr: mediaforge_operations_alerts_active{severity="warning"} > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: MediaForge reports sustained operations warnings.
+          runbook: Inspect queue capacity, spend, and Worker heartbeats.
+
+  - name: mediaforge-reliability
+    rules:
+      - alert: MediaForgeHttp5xxRateHigh
+        expr: |
+          sum(rate(mediaforge_http_requests_total{status=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(mediaforge_http_requests_total[5m])), 0.001) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: MediaForge HTTP 5xx ratio exceeded five percent for five minutes.
+          runbook: Inspect gateway logs, control-plane lease, and Provider diagnostics.
+
+      - alert: MediaForgeProviderFailureRateHigh
+        expr: |
+          sum(rate(mediaforge_provider_attempts_total{outcome="failed"}[15m]))
+          /
+          clamp_min(sum(rate(mediaforge_provider_attempts_total[15m])), 0.001) > 0.25
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: MediaForge Provider failure ratio exceeded the default error budget.
+          runbook: Inspect provider routing, credentials, quotas, and callback status.

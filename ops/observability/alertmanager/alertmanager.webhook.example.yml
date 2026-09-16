@@ -1,0 +1,19 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: production-webhook
+  group_by: [alertname, service, severity]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: production-webhook
+    webhook_configs:
+      - url: https://alerts.example.com/mediaforge
+        send_resolved: true
+        http_config:
+          authorization:
+            type: Bearer
+            credentials_file: /run/secrets/alertmanager-webhook-token

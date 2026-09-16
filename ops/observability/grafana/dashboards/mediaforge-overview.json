@@ -1,0 +1,72 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "mediaforge-prometheus"},
+      "fieldConfig": {"defaults": {"mappings": [{"options": {"0": {"color": "red", "index": 0, "text": "不可用"}, "1": {"color": "green", "index": 1, "text": "正常"}}, "type": "value"}], "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}}, "overrides": []},
+      "gridPos": {"h": 7, "w": 6, "x": 0, "y": 0},
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value_and_name"},
+      "targets": [{"expr": "max(up{job=\"mediaforge\"})", "refId": "A"}],
+      "title": "服务可用性",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mediaforge-prometheus"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "gridPos": {"h": 7, "w": 6, "x": 6, "y": 0},
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value_and_name"},
+      "targets": [{"expr": "sum(mediaforge_operations_alerts_active{severity=\"critical\"})", "refId": "A"}],
+      "title": "严重运营告警",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mediaforge-prometheus"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 1}]}}, "overrides": []},
+      "gridPos": {"h": 7, "w": 6, "x": 12, "y": 0},
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value_and_name"},
+      "targets": [{"expr": "sum(mediaforge_operations_alerts_active{severity=\"warning\"})", "refId": "A"}],
+      "title": "运营提醒",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mediaforge-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "percentunit"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 6, "x": 18, "y": 0},
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value_and_name"},
+      "targets": [{"expr": "sum(rate(mediaforge_http_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(mediaforge_http_requests_total[5m])), 0.001)", "refId": "A"}],
+      "title": "HTTP 5xx 比率",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mediaforge-prometheus"},
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 2, "fillOpacity": 10, "showPoints": "auto"}, "unit": "reqps"}, "overrides": []},
+      "gridPos": {"h": 10, "w": 12, "x": 0, "y": 7},
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"expr": "sum by (status) (rate(mediaforge_http_requests_total[5m]))", "legendFormat": "{{status}}", "refId": "A"}],
+      "title": "HTTP 请求速率（按状态）",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mediaforge-prometheus"},
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "bars", "lineInterpolation": "linear", "lineWidth": 1, "fillOpacity": 30, "showPoints": "never"}, "unit": "ops"}, "overrides": []},
+      "gridPos": {"h": 10, "w": 12, "x": 12, "y": 7},
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"expr": "sum by (provider, outcome) (rate(mediaforge_provider_attempts_total[15m]))", "legendFormat": "{{provider}} · {{outcome}}", "refId": "A"}],
+      "title": "服务商执行速率（15 分钟）",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 41,
+  "tags": ["mediaforge", "operations"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "timezone": "browser",
+  "title": "MediaForge 运营总览",
+  "uid": "mediaforge-operations",
+  "version": 1
+}

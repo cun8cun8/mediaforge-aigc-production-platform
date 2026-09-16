@@ -1,0 +1,1291 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MediaForge 工作室</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-lockup">
+          <span class="brand-mark">MF</span>
+          <span class="brand-name">MediaForge</span>
+          <span class="product-label">工作室</span>
+        </div>
+        <div class="topbar-actions">
+          <span id="connectionState" class="connection-state"><i></i> API 已就绪</span>
+          <div class="auth-controls">
+            <label class="auth-token-label" for="authTokenInput">访问令牌</label>
+            <input id="authTokenInput" class="auth-token-input" type="password" autocomplete="off" placeholder="可选" />
+            <button id="authTokenButton" class="button button-quiet" type="button">连接</button>
+            <button id="authLoginButton" class="button button-approve" type="button" hidden>企业登录</button>
+            <button id="authLogoutButton" class="button button-quiet" type="button" hidden>退出登录</button>
+          </div>
+          <span id="quotaState" class="quota-state">租户配额读取中</span>
+          <button id="providerHealthButton" class="button button-quiet" type="button">检查服务商</button>
+          <a class="quiet-link" href="/docs" target="_blank" rel="noreferrer">API 文档 <span aria-hidden="true">↗</span></a>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="brief-panel">
+          <div class="eyebrow">项目简报</div>
+          <div class="brief-heading">
+            <h1>制作一部短剧</h1>
+            <p>从创意开始，推动每个镜头完成生产。</p>
+          </div>
+          <form id="briefForm" class="brief-form">
+            <label>
+              项目标识
+              <input id="projectId" name="projectId" value="drama_studio_001" required />
+            </label>
+            <label>
+              工作标题
+              <input id="title" name="title" value="午夜来电" required />
+            </label>
+            <label>
+              故事梗概
+              <textarea id="premise" name="premise" rows="3" required>女主在深夜接到一个来自自己未来的电话。</textarea>
+            </label>
+            <div class="field-grid">
+              <label>
+                题材
+                <input id="genre" name="genre" value="都市悬疑" required />
+              </label>
+              <label>
+                时长
+                <select id="duration" name="duration">
+                  <option value="30">30 秒</option>
+                  <option value="45">45 秒</option>
+                  <option value="60">60 秒</option>
+                </select>
+              </label>
+            </div>
+            <label>
+              视觉方向
+              <input id="style" name="style" value="电影感蓝调时刻" required />
+            </label>
+            <div class="field-grid">
+              <label>
+                角色 A
+                <input id="characterA" name="characterA" value="林夏" required />
+              </label>
+              <label>
+                角色 B
+                <input id="characterB" name="characterB" value="周启" required />
+              </label>
+            </div>
+            <label>
+              预算
+              <div class="input-prefix"><span>$</span><input id="budget" name="budget" value="2.00" type="number" min="0.01" step="0.01" required /></div>
+            </label>
+            <button id="createProjectButton" class="button button-primary button-wide" type="submit">
+              <span aria-hidden="true">＋</span> 创建项目
+            </button>
+            <button id="saveProjectButton" class="button button-secondary button-wide" type="button" disabled>
+              保存项目修改
+            </button>
+          </form>
+          <div class="brief-footer">
+            <span class="dot dot-mint"></span>
+            <span>本地工作区</span>
+            <span class="footer-separator">•</span>
+            <span id="projectKeyLabel">暂无项目</span>
+          </div>
+
+          <div class="overview-panel">
+            <div class="panel-heading">
+              <span class="eyebrow">工作室总览</span>
+              <span id="overviewUpdated" class="mini-label">就绪</span>
+            </div>
+            <div class="overview-grid">
+              <div><span>项目数</span><strong id="overviewProjects">0</strong></div>
+              <div><span>进行中</span><strong id="overviewActive">0</strong></div>
+              <div><span>已发布</span><strong id="overviewReleased">0</strong></div>
+              <div><span>已花费</span><strong id="overviewSpent">$0.00</strong></div>
+            </div>
+            <div class="overview-grid overview-metrics">
+              <div><span>镜头通过率</span><strong id="overviewApprovalRate">0%</strong></div>
+              <div><span>任务成功率</span><strong id="overviewSuccessRate">0%</strong></div>
+              <div><span>队列等待</span><strong id="overviewQueueWait">0 秒</strong></div>
+              <div><span>单镜头成本</span><strong id="overviewCostPerShot">$0.00</strong></div>
+            </div>
+            <div class="readiness-row">
+              <span>生产就绪度</span>
+              <strong id="overviewReadiness">检查中</strong>
+              <small id="overviewReadinessNote">正在读取运行环境。</small>
+            </div>
+            <div class="readiness-row">
+              <span>运营告警</span>
+              <strong id="overviewAlerts">检查中</strong>
+              <small id="overviewAlertsNote">正在读取队列、预算和 Worker 状态。</small>
+            </div>
+            <div class="overview-grid enterprise-overview">
+              <div><span>状态库</span><strong id="overviewStateBackend">读取中</strong></div>
+              <div><span>任务队列</span><strong id="overviewQueueBackend">读取中</strong></div>
+              <div><span>身份模式</span><strong id="overviewIdentityMode">读取中</strong></div>
+              <div><span>用量事件</span><strong id="overviewBillingEvents">0</strong></div>
+            </div>
+            <div class="overview-actions">
+              <a id="overviewMetricsJsonLink" class="button button-quiet" href="/studio/metrics/export?format=json" download>导出 JSON</a>
+              <a id="overviewMetricsCsvLink" class="button button-quiet" href="/studio/metrics/export?format=csv" download>导出 CSV</a>
+            </div>
+          </div>
+
+          <div class="project-panel">
+            <div class="panel-heading">
+              <span class="eyebrow">项目列表</span>
+              <button id="refreshProjectsButton" class="icon-button" type="button" aria-label="刷新项目">
+                ↻
+              </button>
+            </div>
+            <label class="toggle-row">
+              <input id="showArchivedToggle" type="checkbox" />
+              显示已归档
+            </label>
+            <div class="project-panel-actions">
+              <button id="importSnapshotButton" class="button button-quiet" type="button">
+                <span aria-hidden="true">↥</span> 导入快照
+              </button>
+              <input id="snapshotImportInput" type="file" accept="application/json,.json" hidden />
+              <button id="importPackageButton" class="button button-quiet" type="button">
+                <span aria-hidden="true">↥</span> 导入交付包
+              </button>
+              <input id="packageImportInput" type="file" accept=".zip,application/zip" hidden />
+              <button id="importArchiveButton" class="button button-quiet" type="button">
+                <span aria-hidden="true">↥</span> 导入归档包
+              </button>
+              <input id="archiveImportInput" type="file" accept=".zip,application/zip" hidden />
+            </div>
+            <div id="projectList" class="project-list"></div>
+          </div>
+        </aside>
+
+        <section class="production-panel">
+          <div class="section-heading">
+            <div>
+              <div class="eyebrow">生产看板</div>
+              <h2 id="projectTitle">尚未加载项目</h2>
+              <p id="projectPremise" class="section-subtitle">创建项目简报以启动生产流程。</p>
+            </div>
+            <div class="section-actions">
+              <span id="projectStatus" class="status-chip status-draft">草稿</span>
+              <button id="planButton" class="button button-secondary" type="button" disabled>
+                <span aria-hidden="true">✦</span> 生成计划
+              </button>
+              <button id="generateAllButton" class="button button-quiet" type="button" disabled>
+                <span aria-hidden="true">▶</span> 全部生成
+              </button>
+              <button id="queueAllButton" class="button button-quiet" type="button" disabled>
+                全部入队
+              </button>
+              <button id="drainQueueButton" class="button button-secondary" type="button" disabled>
+                执行队列
+              </button>
+              <button id="drainAllQueuesButton" class="button button-quiet" type="button">
+                执行全部队列
+              </button>
+              <button id="approveReadyButton" class="button button-approve" type="button" disabled>
+                <span aria-hidden="true">✓</span> 批量通过
+              </button>
+              <button id="cloneButton" class="button button-quiet" type="button" disabled>
+                复制分支
+              </button>
+              <button id="archiveButton" class="button button-quiet" type="button" disabled>
+                归档
+              </button>
+            </div>
+          </div>
+
+          <div class="progress-strip">
+            <div class="progress-track"><span id="progressValue"></span></div>
+            <div class="progress-meta">
+              <span id="progressLabel">0 / 6 个镜头已通过</span>
+              <span id="progressCost">已花费 $0.00</span>
+            </div>
+          </div>
+
+          <section id="workflowStageStrip" class="workflow-stage-strip" hidden aria-label="生产阶段">
+            <div class="workflow-stage-heading">
+              <div>
+                <span class="eyebrow">生产阶段</span>
+                <strong id="workflowStageSummary">0 / 6 阶段已锁定</strong>
+              </div>
+              <span id="workflowStageMode" class="workflow-stage-mode">建议模式</span>
+            </div>
+            <div id="workflowStageList" class="workflow-stage-list"></div>
+            <div id="workflowImpactStrip" class="workflow-impact-strip" hidden></div>
+          </section>
+
+          <div class="metrics-grid">
+            <div class="metric">
+              <span>预算</span>
+              <strong id="budgetMetric">$0.00</strong>
+            </div>
+            <div class="metric">
+              <span>已花费</span>
+              <strong id="spentMetric">$0.00</strong>
+            </div>
+            <div class="metric">
+              <span>任务</span>
+              <strong id="jobsMetric">0</strong>
+            </div>
+            <div class="metric">
+              <span>审计</span>
+              <strong id="auditMetric">0</strong>
+            </div>
+            <div class="metric">
+              <span>待处理</span>
+              <strong id="pendingMetric">0</strong>
+            </div>
+            <div class="metric">
+              <span>失败</span>
+              <strong id="failedMetric">0</strong>
+            </div>
+          </div>
+
+          <div id="operationsStrip" class="operations-strip" hidden>
+            <div>
+              <span class="eyebrow">下一步操作</span>
+              <strong id="nextActionLabel">生成计划</strong>
+            </div>
+              <span id="nextActionMeta">暂无生产任务。</span>
+          </div>
+
+          <div id="shotToolbar" class="shot-toolbar" hidden>
+            <span id="shotFilterCount" class="shot-filter-count">0 个镜头</span>
+            <div class="shot-filters">
+              <input id="shotFilterInput" type="search" placeholder="搜索镜头" aria-label="搜索镜头" />
+              <select id="shotFilterStatus" aria-label="筛选镜头状态">
+                <option value="">全部状态</option>
+                <option value="PENDING">待审核</option>
+                <option value="APPROVED">已通过</option>
+                <option value="CHANGES_REQUESTED">需修改</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="emptyState" class="empty-state">
+            <div class="empty-icon">01</div>
+            <h3>镜头看板正在等待</h3>
+            <p>先填写左侧项目简报，然后生成第一组视觉镜头。</p>
+          </div>
+          <div id="shotList" class="shot-list" hidden></div>
+        </section>
+
+        <aside class="inspector-panel">
+          <div class="inspector-tabs">
+            <button class="tab-button is-active" type="button" data-panel-tab="inspector">镜头</button>
+            <button class="tab-button" type="button" data-panel-tab="jobs">任务</button>
+            <button class="tab-button" type="button" data-panel-tab="assets">资产</button>
+            <button class="tab-button" type="button" data-panel-tab="policy">策略</button>
+            <button class="tab-button" type="button" data-panel-tab="continuity">连续性</button>
+            <button class="tab-button" type="button" data-panel-tab="eval">评估</button>
+            <button class="tab-button" type="button" data-panel-tab="route">路由</button>
+            <button class="tab-button" type="button" data-panel-tab="ab">对比</button>
+            <button class="tab-button" type="button" data-panel-tab="cost">成本</button>
+            <button class="tab-button" type="button" data-panel-tab="audit">审计</button>
+            <button class="tab-button" type="button" data-panel-tab="collaboration">协作</button>
+            <button class="tab-button" type="button" data-panel-tab="trace">追踪</button>
+            <button class="tab-button" type="button" data-panel-tab="retrospective">复盘</button>
+            <button class="tab-button" type="button" data-panel-tab="providers">服务商</button>
+            <button class="tab-button" type="button" data-panel-tab="memory">故事记忆</button>
+            <button class="tab-button" type="button" data-panel-tab="source">原著章节</button>
+            <button class="tab-button" type="button" data-panel-tab="canvas">改编图</button>
+            <button class="tab-button" type="button" data-panel-tab="narrative">故事事件</button>
+            <button class="tab-button" type="button" data-panel-tab="script">剧本场次</button>
+            <button class="tab-button" type="button" data-panel-tab="planning">分步规划</button>
+            <button class="tab-button" type="button" data-panel-tab="enterprise">运行与账单</button>
+          </div>
+          <div id="inspectorTabView" class="tab-view">
+            <div class="inspector-heading">
+              <div>
+                <div class="eyebrow">镜头详情</div>
+                <h2 id="inspectorTitle">请选择镜头</h2>
+              </div>
+              <span id="inspectorRevision" class="revision-label"></span>
+            </div>
+
+            <div id="inspectorEmpty" class="inspector-empty">
+              <span class="inspector-line"></span>
+              <p>选择镜头以查看生成记录和审核状态。</p>
+            </div>
+            <div id="inspectorContent" hidden>
+              <div id="inspectorMedia" class="inspector-media"></div>
+              <div class="inspector-facts">
+                <div><span>场景</span><strong id="inspectorScene">—</strong></div>
+                <div><span>运镜</span><strong id="inspectorMotion">—</strong></div>
+                <div><span>服务商</span><strong id="inspectorProvider">—</strong></div>
+                <div><span>质量</span><strong id="inspectorQuality">—</strong></div>
+                <div><span>任务</span><strong id="inspectorJob">—</strong></div>
+              </div>
+              <div class="inspector-copy">
+                <span class="eyebrow">镜头意图</span>
+                <p id="inspectorDescription">—</p>
+              </div>
+              <div class="shot-edit-form">
+                <div class="eyebrow">编辑镜头卡</div>
+                <label>
+                  场景
+                  <input id="shotEditScene" type="text" maxlength="200" />
+                </label>
+                <label>
+                  镜头描述
+                  <textarea id="shotEditDescription" rows="3" maxlength="2000"></textarea>
+                </label>
+                <div class="field-grid">
+                  <label>
+                    氛围
+                    <input id="shotEditMood" type="text" maxlength="120" />
+                  </label>
+                  <label>
+                    时长（秒）
+                    <input id="shotEditDuration" type="number" min="1" max="5" step="1" />
+                  </label>
+                </div>
+                <label>
+                  角色
+                  <select id="shotEditCharacters" multiple size="2" aria-label="镜头角色"></select>
+                </label>
+                <label>
+                  字幕
+                  <textarea id="shotEditSubtitle" rows="2" maxlength="500" placeholder="可选"></textarea>
+                </label>
+                <button id="saveShotButton" class="button button-secondary" type="button" disabled>保存镜头卡</button>
+              </div>
+              <label class="review-field">
+                审核意见
+                <textarea id="reviewComment" rows="3" placeholder="填写下一轮修改意见"></textarea>
+              </label>
+              <div id="inspectorActions" class="inspector-actions"></div>
+              <section class="quality-details">
+                <div class="panel-heading"><span class="eyebrow">画面质检</span><button id="recheckQualityButton" type="button" class="button button-secondary" disabled>重新质检</button></div>
+                <div id="qualityEvidence" aria-live="polite"></div>
+              </section>
+            </div>
+          </div>
+
+          <div id="sourceTabView" class="tab-view" hidden>
+            <div class="inspector-heading">
+              <div>
+                <div class="eyebrow">原著改编</div>
+                <h2>原著章节</h2>
+              </div>
+              <span id="sourceChapterStatus" class="activity-count">0 章</span>
+            </div>
+            <div class="source-document-upload">
+              <div>
+                <span class="eyebrow">原著文件</span>
+                <strong id="sourceDocumentFileName">尚未选择文件</strong>
+                <span id="sourceOcrStatus" class="mini-label">扫描件 OCR 未加载</span>
+              </div>
+              <div class="narrative-form-actions">
+                <button id="sourceDocumentChooseButton" class="button button-quiet" type="button">选择文件</button>
+                <button id="sourceDocumentImportButton" class="button button-secondary" type="button" disabled>自动分章导入</button>
+                <input id="sourceDocumentFileInput" type="file" accept=".txt,.md,.docx,.pdf,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden />
+              </div>
+            </div>
+            <form id="sourceChapterForm" class="narrative-event-form">
+              <div class="field-grid">
+                <label>原著名称<input id="sourceChapterSourceName" type="text" maxlength="240" required /></label>
+                <label>章节序号<input id="sourceChapterNumber" type="number" min="1" max="100000" value="1" required /></label>
+              </div>
+              <label>章节标题<input id="sourceChapterTitle" type="text" maxlength="240" required /></label>
+              <label>权利依据<input id="sourceChapterRights" type="text" maxlength="500" value="project-owned" required /></label>
+              <label>章节原文<textarea id="sourceChapterContent" rows="9" maxlength="120000" required></textarea></label>
+              <label class="source-consent"><input id="sourceChapterExternalConsent" type="checkbox" /> 允许将本章原文发送给已配置的外部处理服务（OCR 或候选事件提取）</label>
+              <div class="narrative-form-actions">
+                <button id="saveSourceChapterButton" class="button button-secondary" type="submit" disabled>导入章节</button>
+                <button id="cancelSourceChapterButton" class="button button-quiet" type="button" hidden>取消编辑</button>
+              </div>
+            </form>
+            <div class="panel-heading narrative-list-heading">
+              <span class="eyebrow">已导入章节</span>
+              <span id="sourceChapterCount" class="mini-label">0 章</span>
+            </div>
+            <div id="sourceChapterList" class="narrative-event-list"></div>
+            <div class="panel-heading narrative-list-heading">
+              <span class="eyebrow">原著文件记录</span>
+              <span id="sourceDocumentCount" class="mini-label">0 个</span>
+            </div>
+            <div id="sourceDocumentList" class="narrative-event-list"></div>
+            <div class="panel-heading narrative-list-heading">
+              <span class="eyebrow">候选事件</span>
+              <span id="narrativeCandidateCount" class="mini-label">0 条待采纳</span>
+            </div>
+            <div id="narrativeCandidateList" class="narrative-event-list"></div>
+          </div>
+
+          <div id="canvasTabView" class="tab-view" hidden>
+            <div class="inspector-heading">
+              <div>
+                <div class="eyebrow">创作关系</div>
+                <h2>改编图</h2>
+              </div>
+              <span id="adaptationCanvasStatus" class="activity-count">等待原著</span>
+            </div>
+            <div id="adaptationCanvas" class="adaptation-canvas" aria-live="polite"></div>
+          </div>
+
+          <div id="narrativeTabView" class="tab-view" hidden>
+            <div class="inspector-heading">
+              <div>
+                <div class="eyebrow">原著改编</div>
+                <h2>故事事件</h2>
+              </div>
+              <span id="narrativeEventStatus" class="activity-count">0 个已确认</span>
+            </div>
+            <form id="narrativeEventForm" class="narrative-event-form">
+              <div class="field-grid">
+                <label>章节<input id="narrativeChapter" type="number" min="1" max="100000" value="1" required /></label>
+                <label>顺序<input id="narrativeSequence" type="number" min="1" max="10000" value="1" required /></label>
+              </div>
+              <label>事件标题<input id="narrativeTitle" type="text" maxlength="240" required /></label>
+              <label>发生场景<input id="narrativeScene" type="text" maxlength="240" required /></label>
+              <label>核心事件<textarea id="narrativeSummary" rows="4" maxlength="2000" required></textarea></label>
+              <div class="field-grid">
+                <label>涉及角色<input id="narrativeCharacters" type="text" maxlength="500" placeholder="用顿号、逗号或空格分隔" required /></label>
+                <label>情绪<input id="narrativeEmotions" type="text" maxlength="400" placeholder="例如：悬疑、转折" /></label>
+              </div>
+              <div class="field-grid">
+                <label>叙事权重<select id="narrativeImportance"><option value="MAINLINE">主线</option><option value="SUPPORTING">支线</option><option value="TRANSITION">过渡</option></select></label>
+                <label>预估时长（秒）<input id="narrativeDuration" type="number" min="1" max="60" value="5" required /></label>
+              </div>
+              <label>原文定位<input id="narrativeLocator" type="text" maxlength="500" placeholder="例如：第 3 章，第 12 段" /></label>
+              <label>原文摘录<textarea id="narrativeExcerpt" rows="3" maxlength="8000" placeholder="可选。仅用于来源校验与审计，不会直接写入分镜提示词。"></textarea></label>
+              <div class="narrative-form-actions">
+                <button id="saveNarrativeEventButton" class="button button-secondary" type="submit" disabled>添加事件</button>
+                <button id="cancelNarrativeEventButton" class="button button-quiet" type="button" hidden>取消编辑</button>
+              </div>
+            </form>
+            <div class="panel-heading narrative-list-heading">
+              <span class="eyebrow">事件序列</span>
+              <span id="narrativeEventCount" class="mini-label">0 条</span>
+            </div>
+            <div id="narrativeEventList" class="narrative-event-list"></div>
+          </div>
+
+          <div id="scriptTabView" class="tab-view" hidden>
+            <div class="inspector-heading">
+              <div>
+                <div class="eyebrow">剧本改编</div>
+                <h2>剧本场次</h2>
+              </div>
+              <div class="narrative-form-actions">
+                <button id="deriveAdaptationScenesButton" class="button button-secondary" type="button" disabled>从已确认事件生成</button>
+                <span id="adaptationSceneStatus" class="activity-count">0 个已确认</span>
+              </div>
+            </div>
+            <form id="adaptationSceneForm" class="narrative-event-form">
+              <div class="field-grid">
+                <label>顺序<input id="adaptationSceneSequence" type="number" min="1" max="10000" value="1" required /></label>
+                <label>预估时长（秒）<input id="adaptationSceneDuration" type="number" min="1" max="60" value="5" required /></label>
+              </div>
+              <label>场次标题<input id="adaptationSceneHeading" type="text" maxlength="240" required /></label>
+              <label>场次梗概<textarea id="adaptationSceneSynopsis" rows="4" maxlength="4000" required></textarea></label>
+              <label>动作节拍<textarea id="adaptationSceneBeats" rows="3" maxlength="4000" placeholder="每行一个节拍"></textarea></label>
+              <label>对白草稿<textarea id="adaptationSceneDialogue" rows="4" maxlength="8000" placeholder="可选"></textarea></label>
+              <div class="field-grid">
+                <label>涉及角色<input id="adaptationSceneCharacters" type="text" maxlength="500" placeholder="用顿号、逗号或空格分隔" required /></label>
+                <label>情绪氛围<input id="adaptationSceneMood" type="text" maxlength="120" /></label>
+              </div>
+              <label>来源事件 ID<input id="adaptationSceneSourceEvents" type="text" maxlength="2000" placeholder="用顿号、逗号或空格分隔，必须是已确认故事事件" required /></label>
+              <div class="narrative-form-actions">
+                <button id="saveAdaptationSceneButton" class="button button-secondary" type="submit" disabled>添加场次</button>
+                <button id="cancelAdaptationSceneButton" class="button button-quiet" type="button" hidden>取消编辑</button>
+              </div>
+            </form>
+            <div class="panel-heading narrative-list-heading">
+              <span class="eyebrow">场次序列</span>
+              <span id="adaptationSceneCount" class="mini-label">0 条</span>
+            </div>
+            <div id="adaptationSceneList" class="narrative-event-list"></div>
+          </div>
+
+          <div id="planningTabView" class="tab-view" hidden>
+            <div class="inspector-heading"><h2>分步规划</h2><button id="planningRefresh" class="icon-button" type="button" title="刷新规划" aria-label="刷新规划">↻</button></div>
+            <div id="planningMode" class="mini-label" role="status">未加载</div>
+            <div class="provider-actions"><button id="planningStart" class="button button-secondary" type="button" disabled>创建规划草稿</button></div>
+            <label class="review-field">规划记录<select id="planningRunSelect" disabled></select></label>
+            <div id="planningStatus" class="mini-label" role="status"></div>
+            <div id="planningError" class="provider-message" role="alert" hidden></div>
+            <div id="planningTrace" class="runtime-list"></div>
+            <div id="planningDraft" class="policy-list"></div>
+            <label class="review-field">规划审核意见<textarea id="planningComment" rows="3" maxlength="2000"></textarea></label>
+            <div class="planning-actions">
+              <button id="planningApprove" class="button button-approve" type="button" disabled>确认应用</button>
+              <button id="planningRevise" class="button button-secondary" type="button" disabled>修订草稿</button>
+              <button id="planningReject" class="button button-danger" type="button" disabled>退回草稿</button>
+              <button id="planningResume" class="button button-secondary" type="button" disabled>恢复执行</button>
+              <button id="planningMigrate" class="button button-secondary" type="button" disabled>迁移草稿</button>
+              <button id="planningCancel" class="button button-quiet" type="button" disabled>取消规划</button>
+            </div>
+          </div>
+
+          <div id="enterpriseTabView" class="tab-view" hidden>
+            <div class="inspector-heading"><h2>运行与账单</h2><button id="enterpriseRefresh" class="icon-button" type="button" title="刷新运行状态" aria-label="刷新运行状态">↻</button></div>
+            <div class="panel-heading"><span class="eyebrow">基础设施</span><button id="enterpriseProbe" class="button button-secondary" type="button" disabled>检查连接</button></div>
+            <div id="enterpriseRuntime" class="runtime-list" aria-live="polite"></div>
+            <div id="enterpriseProbeResult" class="mini-label" role="status"></div>
+            <div class="panel-heading"><span class="eyebrow">分步规划存储</span><button id="planningProbe" class="button button-secondary" type="button" disabled>检查规划存储</button></div>
+            <div id="planningProbeResult" class="mini-label" role="status"></div>
+            <div class="panel-heading"><span class="eyebrow">故事检索</span><button id="memoryProbe" class="button button-secondary" type="button" disabled>检查检索连接</button></div>
+            <div id="memoryRuntime" class="policy-list"></div>
+            <div id="memoryProbeResult" class="mini-label" role="status"></div>
+            <h3>租户累计用量</h3>
+            <div id="billingTotals" class="runtime-list"></div>
+            <h3>结算对账</h3>
+            <div id="settlementTotals" class="runtime-list"></div>
+            <div id="settlementEvents" class="runtime-list" aria-live="polite"></div>
+            <form id="billingFilterForm" class="billing-filters">
+              <label>项目<input id="billingProject" maxlength="120" placeholder="全部项目" /></label>
+              <label>类别<input id="billingCategory" maxlength="120" placeholder="全部类别" /></label>
+              <label>币种<input id="billingCurrency" maxlength="3" pattern="[A-Za-z]{3}" placeholder="全部币种" /></label>
+              <label>开始时间<input id="billingSince" type="datetime-local" /></label>
+              <label>结束时间<input id="billingUntil" type="datetime-local" /></label>
+              <button id="billingSearch" class="button button-secondary" type="submit">查询用量</button>
+            </form>
+            <div class="panel-heading"><span id="billingCount" class="mini-label">0 条</span><button id="billingDownload" type="button" class="button button-quiet" disabled>导出本页</button></div>
+            <div id="billingEvents" class="runtime-list" aria-live="polite"></div>
+            <div class="billing-pagination"><button id="billingPrevious" class="icon-button" type="button" title="上一页" aria-label="上一页" disabled>←</button><span id="billingPage" class="mini-label">第 1 页</span><button id="billingNext" class="icon-button" type="button" title="下一页" aria-label="下一页" disabled>→</button></div>
+          </div>
+          <div id="jobsTabView" class="tab-view" hidden>
+            <div class="inspector-heading">
+              <div>
+                <div class="eyebrow">任务操作</div>
+                <h2>执行队列</h2>
+              </div>
+              <div class="job-heading-actions">
+                <button id="recoverStaleButton" class="button button-quiet" type="button" disabled>
+                  恢复卡住任务
+                </button>
+                <span id="jobCount" class="activity-count">0 个任务</span>
+              </div>
+            </div>
+            <label class="job-filter">
+              任务状态
+              <select id="jobFilterStatus" aria-label="筛选任务状态">
+                <option value="">全部任务</option>
+                <option value="QUEUED">排队中</option>
+                <option value="ADMITTED">已接收</option>
+                <option value="RUNNING">执行中</option>
+                <option value="SUCCEEDED">已成功</option>
+                <option value="FAILED">失败</option>
+                <option value="QUALITY_REJECTED">质量未通过</option>
+                <option value="RETRY_WAIT">等待重试</option>
+                <option value="CANCELED">已取消</option>
+              </select>
+            </label>
+            <div class="worker-control">
+              <div class="panel-heading">
+                <span class="eyebrow">Worker 控制面</span>
+                <button id="refreshWorkersButton" class="icon-button" type="button" aria-label="刷新 Worker 状态">↻</button>
+              </div>
+              <div class="worker-summary">
+                <div><span>在线 Worker</span><strong id="workerCount">0</strong></div>
+                <div><span>活动租约</span><strong id="workerLeaseCount">0</strong></div>
+                <div><span>当前 Worker</span><strong id="workerCurrentStatus">未注册</strong></div>
+              </div>
+              <div class="worker-form">
+                <input id="workerIdInput" type="text" value="studio-worker" maxlength="120" aria-label="Worker 标识" placeholder="Worker 标识" />
+                <select id="workerCapabilitySelect" aria-label="Worker 生成能力">
+                  <option value="">全部能力</option>
+                  <option value="image_to_video">图生视频</option>
+                  <option value="image_generation">图像生成</option>
+                </select>
+                <input id="workerConcurrencyInput" type="number" min="1" max="64" value="1" aria-label="Worker 并发数" />
+                <input id="workerGpuMemoryInput" type="number" min="0" max="1048576" value="0" aria-label="领取任务所需空闲显存 MiB" placeholder="最低空闲显存 MiB" />
+              </div>
+              <div class="worker-actions">
+                <button id="registerWorkerButton" class="button button-secondary" type="button">注册 / 更新</button>
+                <button id="heartbeatWorkerButton" class="button button-quiet" type="button" disabled>发送心跳</button>
+                <button id="claimWorkerButton" class="button button-approve" type="button" disabled>领取任务</button>
+              </div>
+              <div id="workerList" class="worker-list"></div>
+            </div>
+            <div id="jobSummary" class="job-summary job-queue-summary"></div>
+            <div id="jobsLog" class="job-list"></div>
+          </div>
+
+          <div id="assetsTabView" class="tab-view" hidden>
+            <div class="inspector-heading">
+              <div>
+                <div class="eyebrow">资产清单</div>
+                <h2>来源追溯</h2>
+              </div>
+              <span id="assetCount" class="activity-count">0 个资产</span>
+            </div>
+            <div class="job-summary asset-summary">
+              <div><span>参考</span><strong id="assetRefs">0</strong></div>
+              <div><span>生成</span><strong id="assetGenerated">0</strong></div>
+              <div><span>当前版本</span><strong id="assetCurrent">0</strong></div>
+              <div><span>输出</span><strong id="assetOutputs">0</strong></div>
+            </div>
+            <div class="reference-upload">
+              <div class="panel-heading">
+                <span class="eyebrow">登记参考图</span>
+                <span id="referenceFileName" class="mini-label">未选择文件</span>
+              </div>
+              <div class="reference-upload-row">
+                <input id="referenceFileInput" type="file" accept="image/*" hidden />
+                <button id="referenceChooseButton" class="button button-secondary" type="button" disabled>
+                  选择图片
+                </button>
+                <select id="referenceKind" aria-label="参考图类型" disabled>
+                  <option value="character_reference">角色参考</option>
+                  <option value="style_reference">风格参考</option>
+                  <option value="location_reference">场景参考</option>
+                </select>
+                <select id="referenceCharacter" aria-label="参考角色" disabled></select>
+                <select id="referenceLicense" aria-label="参考图许可证" disabled>
+                  <option value="user_supplied_or_project_owned">项目自有</option>
+                  <option value="licensed">已获授权</option>
+                  <option value="public_domain">公共领域</option>
+                  <option value="cc0">CC0</option>
+                </select>
+                <button id="referenceUploadButton" class="button button-approve" type="button" disabled>
+                  登记参考图
+                </button>
+              </div>
+            </div>
+            <div class="audio-upload">
+              <div class="panel-heading">
+                <span class="eyebrow">项目音频轨</span>
+                <span id="audioFileName" class="mini-label">未配置</span>
+              </div>
+              <div class="audio-upload-row">
+                <input id="audioFileInput" type="file" accept="audio/*,.aac,.flac,.m4a,.mp3,.ogg,.opus,.wav,.webm" hidden />
+                <button id="audioChooseButton" class="button button-secondary" type="button" disabled>
+                  选择音频
+                </button>
+                <select id="audioLicense" aria-label="音频许可证" disabled>
+                  <option value="user_supplied_or_project_owned">项目自有</option>
+                  <option value="licensed">已获授权</option>
+                  <option value="commercial_use_allowed">允许商用</option>
+                  <option value="public_domain">公共领域</option>
+                  <option value="cc0">CC0</option>
+                </select>
+                <input id="audioSource" class="audio-source" type="text" value="studio-upload" aria-label="音频来源或授权凭证" placeholder="来源或授权凭证" disabled />
+                <button id="audioUploadButton" class="button button-approve" type="button" disabled>
+                  应用音频
+                </button>
+                <button id="audioRemoveButton" class="button button-quiet" type="button" disabled>
+                  移除音频
+                </button>
+              </div>
+              <audio id="audioPreview" class="audio-preview" controls preload="metadata" aria-label="试听项目音频轨" hidden></audio>
+            </div>
+            <div class="audio-upload voiceover-panel">
+              <div class="panel-heading">
+                <span class="eyebrow">文本配音</span>
+                <span id="voiceoverStatus" class="mini-label">本地试听</span>
+              </div>
+              <textarea id="voiceoverText" rows="3" maxlength="12000" placeholder="输入旁白或对白文本"></textarea>
+              <div class="audio-upload-row">
+                <input id="voiceoverVoice" type="text" value="default" aria-label="配音音色" placeholder="音色" />
+                <select id="voiceoverLanguage" aria-label="配音语言"><option value="zh-CN">中文</option><option value="en-US">英语</option></select>
+                <select id="voiceoverLicense" aria-label="配音授权"><option value="unverified">授权待确认</option><option value="licensed">已获授权</option><option value="owned">项目自有</option><option value="commercial_use_allowed">允许商用</option></select>
+                <input id="voiceoverSource" type="text" maxlength="500" aria-label="配音授权凭证" placeholder="授权来源或凭证" />
+                <button id="voiceoverButton" class="button button-approve" type="button" disabled>生成配音</button>
+              </div>
+            </div>
+            <div class="audio-upload dialogue-panel">
+              <div class="panel-heading">
+                <span class="eyebrow">多角色对白</span>
+                <span id="dialogueStatus" class="mini-label">等待镜头计划</span>
+              </div>
+              <div id="dialogueLineList" class="dialogue-line-list"></div>
+              <div class="dialogue-actions">
+                <button id="dialogueAddLineButton" class="button button-secondary" type="button" disabled>新增台词</button>
+                <select id="dialogueLicense" aria-label="对白授权"><option value="unverified">授权待确认</option><option value="licensed">已获授权</option><option value="owned">项目自有</option><option value="commercial_use_allowed">允许商用</option></select>
+                <input id="dialogueSource" type="text" maxlength="500" aria-label="对白授权凭证" placeholder="授权来源或凭证" />
+                <button id="dialogueGenerateButton" class="button button-approve" type="button" disabled>合成对白</button>
+              </div>
+            </div>
+            <div class="audio-upload dialogue-panel">
+              <div class="panel-heading">
+                <span class="eyebrow">口型同步</span>
+                <span id="lipsyncStatus" class="mini-label">适配器未启用</span>
+              </div>
+              <div class="dialogue-actions">
+                <span class="mini-label">需先导出样片并配置项目音频轨</span>
+                <button id="lipsyncButton" class="button button-secondary" type="button" disabled>生成口型同步片</button>
+              </div>
+            </div>
+            <div id="assetList" class="asset-list"></div>
+          </div>
+
+          <div id="policyTabView" class="tab-view" hidden>
+            <div class="inspector-heading">
+              <div>
+                <div class="eyebrow">策略门禁</div>
+                <h2>安全与合规</h2>
+              </div>
+              <span id="policyStatus" class="activity-count">通过</span>
+            </div>
+            <div class="cost-summary policy-summary">
+              <div><span>报告</span><strong id="policyReportCount">0</strong></div>
+              <div><span>警告</span><strong id="policyWarningCount">0</strong></div>
+              <div><span>拦截</span><strong id="policyBlockedCount">0</strong></div>
+            </div>
+            <div id="registrySummary" class="registry-summary">
+              <div><span>许可证台账</span><strong id="registryStatus">待检查</strong></div>
+              <div><span>已登记</span><strong id="registryRegistered">0 / 0</strong></div>
+              <div><span>未登记</span><strong id="registryUnregistered">0</strong></div>
+              <span id="registrySource" class="mini-label">来源未知</span>
+              <span id="registryManagement" class="mini-label">尚未更新</span>
+            </div>
+            <div class="registry-actions">
+              <a id="registryExportLink" class="button button-quiet" href="/governance/license-registry/export" download>导出台账</a>
+              <button id="registryValidateButton" class="button button-quiet" type="button">校验当前</button>
+              <button id="registrySyncButton" class="button button-quiet" type="button">同步台账</button>
+              <button id="registryImportButton" class="button button-secondary" type="button">导入台账</button>
+              <input id="registryImportInput" type="file" accept="application/json,.json" hidden />
+            </div>
+            <div id="policyFindings" class="policy-list"></div>
+          </div>
+
+          <div id="continuityTabView" class="tab-view" hidden>
+            <div class="inspector-heading">
+              <div>
+                <div class="eyebrow">连续性审查</div>
+                <h2>故事与时间轴</h2>
+              </div>
+              <span id="continuityStatus" class="activity-count">待检查</span>
+            </div>
+            <div class="eval-actions">
+              <button id="continuityExportButton" class="button button-secondary" type="button" disabled>
+                导出连续性报告
+              </button>
+              <button id="timelineOtioExportButton" class="button button-quiet" type="button" disabled>
+                导出 OTIO 清单
+              </button>
+              <button id="timelineEdlExportButton" class="button button-quiet" type="button" disabled>
+                导出 EDL 清单
+              </button>
+            </div>
+            <a id="continuityLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开连续性 JSON</a>
+            <a id="timelineExportLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开剪辑清单</a>
+            <div class="job-summary eval-summary">
+              <div><span>镜头</span><strong id="continuityShotCount">0</strong></div>
+              <div><span>总时长</span><strong id="continuityDuration">0 秒</strong></div>
+              <div><span>场景</span><strong id="continuitySceneCount">0</strong></div>
+              <div><span>未通过</span><strong id="continuityFailed">0</strong></div>
+            </div>
+            <div class="panel-heading benchmark-heading">
+              <span class="eyebrow">规则检查</span>
+              <span class="mini-label">确定性审查</span>
+            </div>
+            <div id="continuityChecks" class="policy-list"></div>
+            <div class="panel-heading benchmark-heading">
+              <span class="eyebrow">镜头时间轴</span>
+              <span class="mini-label">顺序 · 场景 · 角色 · 字幕</span>
+            </div>
+            <div id="continuityTimeline" class="trace-list"></div>
+          </div>
+
+          <div id="evalTabView" class="tab-view" hidden>
+            <div class="inspector-heading">
+              <div>
+                <div class="eyebrow">交付评估</div>
+                <h2>发布信心</h2>
+              </div>
+              <span id="evalScore" class="activity-count">0 / 100</span>
+            </div>
+            <div class="eval-actions">
+              <button id="evaluateButton" class="button button-secondary" type="button" disabled>
+                执行评估
+              </button>
+              <button id="benchmarkButton" class="button button-quiet" type="button" disabled>
+                服务商基准
+              </button>
+            </div>
+            <div class="eval-links">
+              <a id="evaluationLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开评估 JSON</a>
+              <a id="benchmarkLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开基准 JSON</a>
+            </div>
+            <div class="job-summary eval-summary">
+              <div><span>门禁</span><strong id="evalGateCount">0</strong></div>
+              <div><span>未通过</span><strong id="evalFailedCount">0</strong></div>
+              <div><span>服务商</span><strong id="benchmarkProvider">-</strong></div>
+            </div>
+            <div id="evalGates" class="policy-list"></div>
+            <div class="panel-heading benchmark-heading">
+              <span class="eyebrow">模型准入基线</span>
+              <span id="evaluationBaselineStatus" class="mini-label">尚未设置</span>
+            </div>
+            <div class="annotation-editor">
+              <input id="evaluationBaselineName" type="text" maxlength="240" placeholder="基线名称" aria-label="模型准入基线名称" />
+              <input id="evaluationBaselineScore" type="number" min="0" max="1" step="0.01" placeholder="最低分" aria-label="模型准入最低分" />
+              <button id="evaluationBaselineButton" class="button button-secondary" type="button" disabled>固化基线</button>
+            </div>
+            <div id="evaluationBaselineList" class="asset-list"></div>
+            <div class="panel-heading benchmark-heading">
+              <span class="eyebrow">服务商基准</span>
+              <span id="benchmarkCost" class="mini-label">$0.00</span>
+            </div>
+            <div id="benchmarkList" class="asset-list"></div>
+            <div class="panel-heading benchmark-heading">
+              <span class="eyebrow">提示词版本</span>
+              <span id="promptActiveCount" class="mini-label">0 个启用</span>
+            </div>
+            <div class="prompt-editor">
+              <select id="promptKeySelect" aria-label="提示词类型"></select>
+              <input id="promptLabelInput" type="text" maxlength="240" placeholder="版本名称" aria-label="提示词版本名称" />
+              <textarea id="promptTemplateInput" rows="3" maxlength="16000" placeholder="使用 {{brief.title}} 等变量" aria-label="提示词模板"></textarea>
+              <button id="promptCreateButton" class="button button-secondary" type="button" disabled>创建版本</button>
+            </div>
+            <div id="promptVersionList" class="asset-list"></div>
+            <div class="panel-heading benchmark-heading">
+              <span class="eyebrow">人工结论</span>
+              <span id="annotationCount" class="mini-label">0 条</span>
+            </div>
+            <div class="annotation-editor">
+              <select id="annotationVerdictSelect" aria-label="人工结论">
+                <option value="PASS">通过</option>
+                <option value="NEEDS_CHANGES">需修改</option>
+                <option value="FAIL">未通过</option>
+                <option value="UNSURE">待确认</option>
+              </select>
+              <input id="annotationRatingInput" type="number" min="0" max="1" step="0.05" value="1" aria-label="人工评分" />
+              <input id="annotationNoteInput" type="text" maxlength="4000" placeholder="评审意见" aria-label="评审意见" />
+              <button id="annotationCreateButton" class="button button-secondary" type="button" disabled>记录结论</button>
+            </div>
+            <div id="annotationList" class="asset-list"></div>
+          </div>
+
+          <div id="routeTabView" class="tab-view" hidden>
+            <div class="inspector-heading">
+              <div>
+                <div class="eyebrow">路由预览</div>
+                <h2>服务商选择</h2>
+              </div>
+              <span id="routeCount" class="activity-count">0 条路由</span>
+            </div>
+            <div class="eval-actions">
+              <button id="routeExportButton" class="button button-secondary" type="button" disabled>
+                导出路由
+              </button>
+            </div>
+            <a id="routeLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开路由 JSON</a>
+            <div class="job-summary eval-summary">
+              <div><span>已选</span><strong id="routeSelected">-</strong></div>
+              <div><span>成本</span><strong id="routeSelectedCost">$0.00</strong></div>
+              <div><span>匹配</span><strong id="routeMatched">0</strong></div>
+            </div>
+            <div id="routeList" class="asset-list"></div>
+          </div>
+
+          <div id="abTabView" class="tab-view" hidden>
+            <div class="inspector-heading">
+              <div>
+                <div class="eyebrow">候选对比</div>
+                <h2>镜头候选</h2>
+              </div>
+              <span id="abCount" class="activity-count">0 个候选</span>
+            </div>
+            <div class="eval-actions">
+              <button id="compareButton" class="button button-secondary" type="button" disabled>
+                对比当前镜头
+              </button>
+              <button id="comparisonExportButton" class="button button-quiet" type="button" disabled>
+                导出对比
+              </button>
+            </div>
+            <a id="comparisonLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开对比 JSON</a>
+            <div class="job-summary eval-summary">
+              <div><span>最佳</span><strong id="abBest">-</strong></div>
+              <div><span>得分</span><strong id="abScore">0%</strong></div>
+              <div><span>成本</span><strong id="abCost">$0.00</strong></div>
+            </div>
+            <div id="abVariantList" class="asset-list"></div>
+          </div>
+
+          <div id="costTabView" class="tab-view" hidden>
+            <div class="inspector-heading">
+              <div>
+                <div class="eyebrow">成本台账</div>
+                <h2>预算控制</h2>
+              </div>
+              <span id="costRatio" class="revision-label">0%</span>
+            </div>
+            <div class="cost-summary">
+              <div><span>预算</span><strong id="costBudget">$0.00</strong></div>
+              <div><span>已花费</span><strong id="costSpent">$0.00</strong></div>
+              <div><span>剩余</span><strong id="costRemaining">$0.00</strong></div>
+            </div>
+            <div id="costBreakdown" class="cost-breakdown"></div>
+          </div>
+
+          <div id="auditTabView" class="tab-view" hidden>
+            <div class="inspector-heading">
+              <div>
+                <div class="eyebrow">审计记录</div>
+                <h2>项目历史</h2>
+              </div>
+              <span id="auditCount" class="activity-count">0 条事件</span>
+            </div>
+            <div class="audit-actions">
+              <button id="auditExportButton" class="button button-quiet" type="button" disabled>
+                导出审计
+              </button>
+              <button id="auditCsvExportButton" class="button button-quiet" type="button" disabled>
+                导出 CSV
+              </button>
+              <button id="auditIntegrityButton" class="button button-quiet" type="button" disabled>
+                验证审计链
+              </button>
+              <button id="auditIntegrityExportButton" class="button button-quiet" type="button" disabled>
+                导出校验报告
+              </button>
+              <button id="auditAnchorButton" class="button button-quiet" type="button" disabled>
+                外部锚定
+              </button>
+              <button id="snapshotButton" class="button button-secondary" type="button" disabled>
+                快照
+              </button>
+              <button id="reportButton" class="button button-secondary" type="button" disabled>
+                生产报告
+              </button>
+              <button id="provenanceButton" class="button button-secondary" type="button" disabled>
+                来源追溯
+              </button>
+              <button id="complianceButton" class="button button-secondary" type="button" disabled>
+                合规报告
+              </button>
+              <button id="distributionButton" class="button button-secondary" type="button" disabled>
+                分发报告
+              </button>
+              <button id="acceptanceExportButton" class="button button-secondary" type="button" disabled>
+                导出验收证书
+              </button>
+            </div>
+            <a id="auditExportLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开审计 JSON</a>
+            <a id="auditCsvLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开审计 CSV</a>
+            <a id="auditIntegrityLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开审计链校验报告</a>
+            <div id="auditIntegrityStatus" class="mini-label" role="status">审计链：等待项目加载</div>
+            <a id="auditAnchorLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开外部锚定回执</a>
+            <div id="auditAnchorStatus" class="mini-label" role="status">外部锚定：等待项目加载</div>
+            <a id="snapshotLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开项目快照</a>
+            <a id="reportLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开生产报告</a>
+            <a id="provenanceLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开来源报告</a>
+            <a id="complianceLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开合规报告</a>
+            <div id="auditLog" class="activity-log audit-log">
+              <div class="activity-item activity-muted"><span class="activity-dot"></span><span>暂无审计事件。</span></div>
+            </div>
+          </div>
+
+          <div id="collaborationTabView" class="tab-view" hidden>
+            <div class="inspector-heading">
+              <div>
+                <div class="eyebrow">协作空间</div>
+                <h2>成员与讨论</h2>
+              </div>
+              <span id="collaborationCount" class="activity-count">0 条评论</span>
+            </div>
+            <div class="collaboration-summary">
+              <div><span>成员</span><strong id="collaborationMembers">0</strong></div>
+              <div><span>评论</span><strong id="collaborationComments">0</strong></div>
+              <div><span>在线</span><strong id="collaborationPresence">0</strong></div>
+              <div><span>编辑锁</span><strong id="collaborationLocks">0</strong></div>
+            </div>
+            <div class="collaboration-compose">
+              <div class="panel-heading"><span class="eyebrow">协作状态</span></div>
+              <div class="collaboration-member-row">
+                <select id="collaborationPresenceStatus" aria-label="协作状态">
+                  <option value="ACTIVE">在线</option>
+                  <option value="BUSY">忙碌</option>
+                  <option value="AWAY">暂离</option>
+                </select>
+                <input id="collaborationPresenceSection" type="text" maxlength="160" placeholder="当前区域，如 时间线" />
+                <button id="collaborationPresenceButton" class="button button-quiet" type="button" disabled>更新状态</button>
+              </div>
+              <div id="collaborationPresenceList" class="asset-list"></div>
+            </div>
+            <div class="collaboration-compose">
+              <div class="panel-heading"><span class="eyebrow">编辑锁</span></div>
+              <div class="collaboration-member-row">
+                <select id="collaborationLockTarget" aria-label="编辑锁目标">
+                  <option value="brief:project">项目简报</option>
+                  <option value="timeline:main">编辑时间线</option>
+                  <option value="prompt:planning.story">故事规划提示词</option>
+                </select>
+                <button id="collaborationLockButton" class="button button-quiet" type="button" disabled>获取编辑锁</button>
+              </div>
+              <div id="collaborationLockList" class="asset-list"></div>
+            </div>
+            <div class="collaboration-compose">
+              <div class="panel-heading">
+                <span class="eyebrow">共享制作笔记</span>
+                <span id="collaborationRealtimeStatus" class="mini-label">等待同步</span>
+              </div>
+              <textarea id="collaborationDocumentInput" rows="5" maxlength="16000" placeholder="记录分镜决策、制作交接与待办"></textarea>
+              <div class="collaboration-member-row collaboration-document-actions">
+                <input id="collaborationDocumentId" type="text" maxlength="160" value="production-notes" aria-label="共享笔记标识" placeholder="笔记标识" />
+                <button id="collaborationDocumentSaveButton" class="button button-secondary" type="button" disabled>保存笔记</button>
+              </div>
+              <div id="collaborationDocumentList" class="asset-list"></div>
+            </div>
+            <div class="collaboration-compose">
+              <textarea id="collaborationCommentInput" rows="3" placeholder="记录项目决策、审核意见或交接信息"></textarea>
+              <div class="collaboration-compose-actions">
+                <select id="collaborationShotSelect" aria-label="关联镜头">
+                  <option value="">项目级评论</option>
+                </select>
+                <button id="collaborationCommentButton" class="button button-secondary" type="button" disabled>添加评论</button>
+              </div>
+            </div>
+            <div class="collaboration-compose">
+              <div class="panel-heading"><span class="eyebrow">添加成员</span></div>
+              <div class="collaboration-member-row">
+                <input id="collaborationMemberInput" type="text" placeholder="成员标识，如 producer@example.com" />
+                <select id="collaborationMemberRole" aria-label="成员角色">
+                  <option value="viewer">查看者</option>
+                  <option value="editor">编辑者</option>
+                  <option value="reviewer">审核者</option>
+                  <option value="publisher">发布者</option>
+                </select>
+                <button id="collaborationMemberButton" class="button button-secondary" type="button" disabled>保存成员</button>
+              </div>
+            </div>
+            <div class="panel-heading"><span class="eyebrow">成员列表</span></div>
+            <div id="collaborationMemberList" class="asset-list"></div>
+            <div class="panel-heading"><span class="eyebrow">最新评论</span></div>
+            <div id="collaborationCommentList" class="activity-log"></div>
+          </div>
+
+          <div id="traceTabView" class="tab-view" hidden>
+            <div class="inspector-heading">
+              <div>
+                <div class="eyebrow">执行追踪</div>
+                <h2>调用链</h2>
+              </div>
+              <span id="traceCount" class="activity-count">0 个追踪节点</span>
+            </div>
+            <div class="eval-actions">
+              <button id="traceExportButton" class="button button-secondary" type="button" disabled>
+                导出追踪
+              </button>
+            </div>
+            <a id="traceLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开追踪 JSON</a>
+            <div class="job-summary eval-summary">
+              <div><span>追踪 ID</span><strong id="traceId">-</strong></div>
+              <div><span>耗时</span><strong id="traceDuration">0 毫秒</strong></div>
+              <div><span>成本</span><strong id="traceCost">$0.00</strong></div>
+              <div><span>失败任务</span><strong id="traceFailed">0</strong></div>
+            </div>
+            <div id="traceList" class="trace-list"></div>
+          </div>
+
+          <div id="retrospectiveTabView" class="tab-view" hidden>
+            <div class="inspector-heading">
+              <div>
+                <div class="eyebrow">项目复盘</div>
+                <h2>生产复盘</h2>
+              </div>
+              <span id="retrospectiveMaturity" class="activity-count">0%</span>
+            </div>
+            <div class="eval-actions">
+              <button id="retrospectiveExportButton" class="button button-secondary" type="button" disabled>
+                导出复盘报告
+              </button>
+            </div>
+            <a id="retrospectiveLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开复盘 JSON</a>
+            <div class="job-summary retrospective-summary">
+              <div><span>审批通过率</span><strong id="retrospectiveApproval">0%</strong></div>
+              <div><span>质量通过率</span><strong id="retrospectiveQuality">0%</strong></div>
+              <div><span>返工次数</span><strong id="retrospectiveRevisions">0</strong></div>
+              <div><span>单个已通过镜头成本</span><strong id="retrospectiveCostPerShot">$0.00</strong></div>
+            </div>
+            <div class="retrospective-block">
+              <div class="panel-heading">
+                <span class="eyebrow">下一步行动</span>
+                <span id="retrospectiveActionCount" class="mini-label">0 项待处理</span>
+              </div>
+              <div id="retrospectiveNextActions" class="policy-list"></div>
+            </div>
+            <div class="retrospective-block">
+              <div class="panel-heading">
+                <span class="eyebrow">复盘洞察</span>
+                <span id="retrospectiveInsightCount" class="mini-label">0 条发现</span>
+              </div>
+              <div id="retrospectiveInsights" class="policy-list"></div>
+            </div>
+            <div class="retrospective-block">
+              <div class="panel-heading">
+                <span class="eyebrow">项目里程碑</span>
+                <span id="retrospectiveElapsed" class="mini-label">0 毫秒</span>
+              </div>
+              <div id="retrospectiveMilestones" class="activity-log"></div>
+            </div>
+            <div class="retrospective-block">
+              <div class="panel-heading">
+                <span class="eyebrow">数据飞轮</span>
+                <button id="datasetExportButton" class="button button-secondary" type="button" disabled>导出审核数据集</button>
+              </div>
+              <div id="datasetStatus" class="mini-label">仅纳入当前版本、人工通过且质量通过的镜头</div>
+            </div>
+          </div>
+
+          <div id="memoryTabView" class="tab-view" hidden>
+            <div class="inspector-heading">
+              <h2>故事记忆</h2>
+              <button id="memoryRagflowSync" class="button button-quiet" type="button" hidden disabled>同步已批准快照</button>
+              <span id="memoryStatus" class="mini-label" role="status">未加载</span>
+            </div>
+            <div id="memoryBackend" class="policy-list"></div>
+            <form id="memorySearchForm" class="memory-search-form">
+              <label for="memoryQuery">检索内容</label>
+              <input id="memoryQuery" type="search" maxlength="500" required />
+              <button id="memorySearchButton" class="button button-secondary" type="submit" disabled>检索</button>
+            </form>
+            <fieldset class="memory-sources">
+              <legend>检索与规划来源</legend>
+              <div id="memorySourceList"><span class="mini-label">暂无项目</span></div>
+            </fieldset>
+            <div class="panel-heading">
+              <span class="eyebrow">检索结果</span>
+              <span id="memoryResultCount" class="mini-label">0 条</span>
+            </div>
+            <div id="memoryResults" class="policy-list" aria-live="polite"></div>
+            <div class="provider-block">
+              <div class="panel-heading"><span class="eyebrow">当前计划引用</span></div>
+              <div id="memoryCitations" class="policy-list"></div>
+            </div>
+          </div>
+
+          <div id="providersTabView" class="tab-view" hidden>
+            <div class="inspector-heading">
+              <div>
+                <div class="eyebrow">服务商中心</div>
+                <h2>运行诊断</h2>
+              </div>
+              <span id="providerReadiness" class="activity-count">待诊断</span>
+            </div>
+            <div class="provider-actions">
+              <button id="providerDiagnosticsButton" class="button button-secondary" type="button">
+                运行诊断
+              </button>
+              <button id="providerContractButton" class="button button-quiet" type="button" disabled>验证接口契约</button>
+              <button id="providerWarmupButton" class="button button-quiet" type="button">模型预热</button>
+              <span id="providerCheckedAt" class="mini-label">尚未检查</span>
+            </div>
+            <div id="providerWarmupResult" class="mini-label" role="status"></div>
+            <div id="providerSummary" class="job-summary provider-summary">
+              <div><span>模式</span><strong>-</strong></div>
+              <div><span>服务商</span><strong>-</strong></div>
+              <div><span>配置</span><strong>检查中</strong></div>
+              <div><span>连通性</span><strong>待诊断</strong></div>
+              <div><span>路由池</span><strong id="providerPoolSummary">1 个</strong></div>
+            </div>
+            <div id="providerMessage" class="provider-message">正在读取服务商配置。</div>
+            <div class="provider-block">
+              <div class="panel-heading">
+                <span class="eyebrow">接口契约</span>
+                <span id="providerContractStatus" class="mini-label">尚未验证</span>
+              </div>
+              <div id="providerContractList" class="policy-list"></div>
+            </div>
+            <div class="provider-block">
+              <div class="panel-heading">
+                <span class="eyebrow">故事规划 Agent</span>
+                <span id="plannerStatus" class="mini-label">读取中</span>
+              </div>
+              <div id="plannerSummary" class="provider-message">正在读取规划器配置。</div>
+            </div>
+            <div class="provider-block">
+              <div class="panel-heading">
+                <span class="eyebrow">生成能力</span>
+                <span id="providerCapabilityCount" class="mini-label">0 项</span>
+              </div>
+              <div id="providerCapabilities" class="provider-capabilities"></div>
+            </div>
+            <div class="provider-block">
+              <div class="panel-heading">
+                <span class="eyebrow">配置摘要</span>
+                <span class="mini-label">已脱敏</span>
+              </div>
+              <div id="providerConfigList" class="policy-list"></div>
+            </div>
+            <div class="provider-block">
+              <div class="panel-heading">
+                <span class="eyebrow">诊断项</span>
+                <span id="providerCheckCount" class="mini-label">0 项</span>
+              </div>
+              <div id="providerCheckList" class="policy-list"></div>
+            </div>
+            <div class="provider-block">
+              <div class="panel-heading">
+                <span class="eyebrow">下一步处理</span>
+                <span id="providerActionCount" class="mini-label">0 项</span>
+              </div>
+              <div id="providerActionList" class="policy-list"></div>
+            </div>
+          </div>
+
+          <div class="activity-section">
+            <div class="activity-heading">
+              <span class="eyebrow">运行日志</span>
+              <span id="activityCount" class="activity-count">0 条记录</span>
+            </div>
+            <div id="activityLog" class="activity-log">
+              <div class="activity-item activity-muted"><span class="activity-dot"></span><span>工作区已就绪。</span></div>
+            </div>
+          </div>
+
+          <div class="export-panel">
+            <div>
+              <span class="eyebrow">交付</span>
+              <strong id="deliveryState">等待审批</strong>
+            </div>
+            <button id="exportButton" class="button button-export" type="button" disabled>
+              导出样片 <span aria-hidden="true">↗</span>
+            </button>
+            <button id="packageButton" class="button button-secondary" type="button" disabled>
+              打包交付 <span aria-hidden="true">↓</span>
+            </button>
+            <button id="verifyPackageButton" class="button button-quiet" type="button" disabled>
+              验证交付包 <span aria-hidden="true">✓</span>
+            </button>
+            <button id="releaseButton" class="button button-approve" type="button" disabled>
+              发布项目 <span aria-hidden="true">✓</span>
+            </button>
+            <button id="recordDeliveryButton" class="button button-secondary" type="button" disabled>
+              记录分发 <span aria-hidden="true">↗</span>
+            </button>
+            <label class="toggle-row delivery-toggle">
+              <input id="deliveryAcceptedToggle" type="checkbox" checked />
+              接受交付
+            </label>
+            <button id="acknowledgeDeliveryButton" class="button button-approve" type="button" disabled>
+              确认交付 <span aria-hidden="true">✓</span>
+            </button>
+            <button id="closeoutButton" class="button button-secondary" type="button" disabled>
+              关闭项目 <span aria-hidden="true">⟲</span>
+            </button>
+            <button id="archivePackageButton" class="button button-secondary" type="button" disabled>
+              打包归档 <span aria-hidden="true">↓</span>
+            </button>
+            <button id="verifyArchiveButton" class="button button-quiet" type="button" disabled>
+              验证归档 <span aria-hidden="true">✓</span>
+            </button>
+            <a id="downloadLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开最终 MP4</a>
+            <a id="subtitleLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开字幕 SRT</a>
+            <a id="audioLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开项目音频轨</a>
+            <a id="packageLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开交付 ZIP</a>
+            <a id="verificationLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开验证报告</a>
+            <a id="deliveryReceiptLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开交付回执</a>
+            <a id="distributionLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开分发报告</a>
+            <a id="acceptanceLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开验收报告</a>
+            <a id="closeoutLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开结项报告</a>
+            <a id="archivePackageLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开归档 ZIP</a>
+            <a id="archiveVerificationLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开归档验证报告</a>
+          </div>
+        </aside>
+      </main>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+</html>

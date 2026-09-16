@@ -1,0 +1,83 @@
+# This overlay intentionally permits only MediaForge's internal control path and DNS.
+# Add reviewed database/object-storage/OIDC/Provider and ingress rules from the
+# examples before applying it to an environment with external dependencies.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mediaforge-default-deny
+  labels:
+    app.kubernetes.io/name: mediaforge
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mediaforge-dns
+  labels:
+    app.kubernetes.io/name: mediaforge
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mediaforge
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mediaforge-worker-to-api
+  labels:
+    app.kubernetes.io/name: mediaforge
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mediaforge
+      app.kubernetes.io/component: gpu-worker
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mediaforge
+              app.kubernetes.io/component: api
+      ports:
+        - protocol: TCP
+          port: 8020
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mediaforge-api-from-worker
+  labels:
+    app.kubernetes.io/name: mediaforge
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mediaforge
+      app.kubernetes.io/component: api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mediaforge
+              app.kubernetes.io/component: gpu-worker
+      ports:
+        - protocol: TCP
+          port: 8020

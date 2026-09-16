@@ -1,0 +1,27 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: dashboard-only
+  group_by: [alertname, service, severity]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - receiver: dashboard-only
+      matchers:
+        - severity="critical"
+      repeat_interval: 1h
+
+inhibit_rules:
+  - source_matchers:
+      - alertname="MediaForgeTargetDown"
+    target_matchers:
+      - severity="warning"
+    equal: [service]
+
+receivers:
+  # The bundled receiver intentionally sends nothing outside this deployment.
+  # Replace it with a reviewed webhook, chat, paging, or email receiver before
+  # relying on notifications as an operational control.
+  - name: dashboard-only

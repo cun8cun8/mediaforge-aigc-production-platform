@@ -1,0 +1,178 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mediaforge-api
+  labels:
+    app.kubernetes.io/name: mediaforge
+    app.kubernetes.io/component: api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mediaforge
+      app.kubernetes.io/component: api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mediaforge
+        app.kubernetes.io/component: api
+    spec:
+      terminationGracePeriodSeconds: 45
+      containers:
+        - name: api
+          image: ghcr.io/replace-me/mediaforge:replace-me
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8020
+          envFrom:
+            - configMapRef:
+                name: mediaforge-runtime
+            - configMapRef:
+                name: mediaforge-provider
+                optional: true
+          env:
+            - name: MEDIAFORGE_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: mediaforge-runtime
+                  key: database-url
+            - name: MEDIAFORGE_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: mediaforge-runtime
+                  key: redis-url
+            - name: MEDIAFORGE_STORAGE_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: mediaforge-runtime
+                  key: storage-endpoint
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: mediaforge-runtime
+                  key: storage-access-key-id
+                  optional: true
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mediaforge-runtime
+                  key: storage-secret-access-key
+                  optional: true
+            - name: MEDIAFORGE_API_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: mediaforge-runtime
+                  key: api-keys
+            - name: MEDIAFORGE_CALLBACK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: mediaforge-runtime
+                  key: callback-secret
+            - name: MEDIAFORGE_SETTLEMENT_CALLBACK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: mediaforge-runtime
+                  key: settlement-callback-secret
+                  optional: true
+            - name: MEDIAFORGE_STRIPE_SETTLEMENT_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: mediaforge-runtime
+                  key: stripe-settlement-webhook-secret
+                  optional: true
+            - name: MEDIAFORGE_SIEM_BEARER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mediaforge-runtime
+                  key: siem-bearer-token
+                  optional: true
+            - name: MEDIAFORGE_SIEM_SIGNING_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: mediaforge-runtime
+                  key: siem-signing-secret
+                  optional: true
+            - name: MEDIAFORGE_AUDIT_ANCHOR_BEARER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mediaforge-runtime
+                  key: audit-anchor-bearer-token
+                  optional: true
+            - name: MEDIAFORGE_AUDIT_ANCHOR_SIGNING_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: mediaforge-runtime
+                  key: audit-anchor-signing-secret
+                  optional: true
+            - name: MEDIAFORGE_CONTROL_PLANE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: MEDIAFORGE_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: mediaforge-runtime
+                  key: oidc-client-secret
+                  optional: true
+          volumeMounts:
+            - name: mediaforge-data
+              mountPath: /var/lib/mediaforge
+            - name: runtime-secrets
+              mountPath: /var/run/secrets/mediaforge
+              readOnly: true
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: http
+            failureThreshold: 30
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+      volumes:
+        - name: mediaforge-data
+          persistentVolumeClaim:
+            claimName: mediaforge-data
+        - name: runtime-secrets
+          secret:
+            secretName: mediaforge-runtime
+            defaultMode: 256
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mediaforge-api
+  labels:
+    app.kubernetes.io/name: mediaforge
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mediaforge
+      app.kubernetes.io/component: api

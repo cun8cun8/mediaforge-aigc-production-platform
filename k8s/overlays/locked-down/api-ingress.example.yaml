@@ -1,0 +1,24 @@
+# Copy this file to an environment-specific overlay after replacing hostname,
+# issuer, and ingress-class annotations required by the cluster.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mediaforge-api
+  namespace: mediaforge
+spec:
+  ingressClassName: replace-me
+  tls:
+    - hosts:
+        - mediaforge.example.com
+      secretName: mediaforge-api-tls
+  rules:
+    - host: mediaforge.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mediaforge-api
+                port:
+                  name: http

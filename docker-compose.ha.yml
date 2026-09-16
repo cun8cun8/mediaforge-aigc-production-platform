@@ -1,0 +1,112 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: mediaforge
+      POSTGRES_USER: mediaforge
+      POSTGRES_PASSWORD: ${MEDIAFORGE_POSTGRES_PASSWORD:?set MEDIAFORGE_POSTGRES_PASSWORD in .env}
+    volumes:
+      - mediaforge-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mediaforge -d mediaforge"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - mediaforge-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: ["server", "/data"]
+    environment:
+      MINIO_ROOT_USER: ${MEDIAFORGE_MINIO_ROOT_USER:?set MEDIAFORGE_MINIO_ROOT_USER in .env}
+      MINIO_ROOT_PASSWORD: ${MEDIAFORGE_MINIO_ROOT_PASSWORD:?set MEDIAFORGE_MINIO_ROOT_PASSWORD in .env}
+    volumes:
+      - mediaforge-minio:/data
+    restart: unless-stopped
+
+  mediaforge:
+    build: .
+    env_file:
+      - ${MEDIAFORGE_ENV_FILE:-.env}
+    environment:
+      MEDIAFORGE_ARTIFACT_ROOT: /var/lib/mediaforge/artifacts
+      MEDIAFORGE_STATE_BACKEND: postgres
+      MEDIAFORGE_DATABASE_URL: postgresql://mediaforge:${MEDIAFORGE_POSTGRES_PASSWORD}@postgres:5432/mediaforge
+      MEDIAFORGE_QUEUE_BACKEND: redis
+      MEDIAFORGE_REDIS_URL: redis://redis:6379/0
+      MEDIAFORGE_STORAGE_MODE: s3
+      MEDIAFORGE_STORAGE_ENDPOINT: http://minio:9000
+      MEDIAFORGE_STORAGE_BUCKET: ${MEDIAFORGE_STORAGE_BUCKET:-mediaforge-artifacts}
+      MEDIAFORGE_CONTROL_PLANE_MODE: leased
+      MEDIAFORGE_CONTROL_PLANE_LEASE_SECONDS: ${MEDIAFORGE_CONTROL_PLANE_LEASE_SECONDS:-30}
+      MEDIAFORGE_RATE_LIMIT_BACKEND: sqlite
+      MEDIAFORGE_BILLING_DB: /var/lib/mediaforge/billing.sqlite3
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - mediaforge-shared-artifacts:/var/lib/mediaforge
+    expose:
+      - "8020"
+    restart: unless-stopped
+
+  gateway:
+    image: nginx:1.27-alpine
+    depends_on:
+      - mediaforge
+    ports:
+      - "8020:8080"
+    volumes:
+      - ./ops/nginx-ha.conf:/etc/nginx/conf.d/default.conf:ro
+    restart: unless-stopped
+
+  mediaforge-gpu-worker:
+    build: .
+    profiles: ["gpu-worker"]
+    depends_on:
+      - gateway
+    env_file:
+      - ${MEDIAFORGE_ENV_FILE:-.env}
+    environment:
+      MEDIAFORGE_API_BASE_URL: http://gateway:8080
+      MEDIAFORGE_ARTIFACT_ROOT: /var/lib/mediaforge/artifacts
+      MEDIAFORGE_WORKER_EXECUTION_MODE: local-provider-callback
+      MEDIAFORGE_WORKER_ARTIFACT_ROOT: /var/lib/mediaforge/artifacts
+      MEDIAFORGE_WORKER_PROVIDER: ${MEDIAFORGE_WORKER_PROVIDER:-}
+      MEDIAFORGE_WORKER_CONCURRENCY: ${MEDIAFORGE_GPU_WORKER_CONCURRENCY:-1}
+    command:
+      [
+        "/bin/sh",
+        "-ec",
+        "exec mediaforge-worker --base-url http://gateway:8080 --worker-id $${HOSTNAME} --concurrency ${MEDIAFORGE_GPU_WORKER_CONCURRENCY:-1} --execution-mode local-provider-callback --artifact-root /var/lib/mediaforge/artifacts --poll-interval 5"
+      ]
+    volumes:
+      - mediaforge-shared-artifacts:/var/lib/mediaforge
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  mediaforge-postgres:
+  mediaforge-redis:
+  mediaforge-minio:
+  mediaforge-shared-artifacts:

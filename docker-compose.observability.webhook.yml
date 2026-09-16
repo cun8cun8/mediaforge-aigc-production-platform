@@ -1,0 +1,12 @@
+services:
+  alertmanager:
+    volumes:
+      - ${MEDIAFORGE_ALERTMANAGER_CONFIG_FILE:?set MEDIAFORGE_ALERTMANAGER_CONFIG_FILE to a reviewed Alertmanager config}:/etc/alertmanager/alertmanager.yml:ro
+    secrets:
+      - source: alertmanager_webhook_token
+        target: alertmanager_webhook_token
+        mode: 0400
+
+secrets:
+  alertmanager_webhook_token:
+    file: ${MEDIAFORGE_ALERTMANAGER_WEBHOOK_TOKEN_FILE:?set MEDIAFORGE_ALERTMANAGER_WEBHOOK_TOKEN_FILE to a one-line secret file}

@@ -1,0 +1,77 @@
+name: MediaForge Manual Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: GitHub Environment containing the protected KUBE_CONFIG_DATA secret
+        required: true
+        type: environment
+      overlay:
+        description: Kubernetes overlay to render
+        required: true
+        default: gpu-worker
+        type: choice
+        options:
+          - base
+          - gpu-worker
+          - locked-down
+      image:
+        description: Immutable MediaForge image reference, preferably a digest
+        required: true
+        type: string
+      mode:
+        description: Server-side dry run or explicit apply
+        required: true
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - apply
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      KUBE_CONFIG_DATA: ${{ secrets.KUBE_CONFIG_DATA }}
+      OVERLAY: ${{ inputs.overlay }}
+      IMAGE: ${{ inputs.image }}
+      MODE: ${{ inputs.mode }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-kubectl@v4
+      - name: Configure protected cluster access
+        run: |
+          if [ -z "$KUBE_CONFIG_DATA" ]; then
+            echo "KUBE_CONFIG_DATA is required in the selected GitHub Environment." >&2
+            exit 2
+          fi
+          printf '%s' "$KUBE_CONFIG_DATA" | base64 --decode > "$RUNNER_TEMP/kubeconfig"
+          chmod 600 "$RUNNER_TEMP/kubeconfig"
+          echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
+      - name: Render immutable release manifest
+        run: |
+          case "$IMAGE" in
+            ''|*[!A-Za-z0-9._/:@-]*) echo "Image reference is invalid." >&2; exit 2 ;;
+          esac
+          if [ "$OVERLAY" = "base" ]; then
+            target="k8s/base"
+          else
+            target="k8s/overlays/$OVERLAY"
+          fi
+          kubectl kustomize "$target" \
+            | sed "s|image: ghcr.io/replace-me/mediaforge:replace-me|image: $IMAGE|" \
+            > "$RUNNER_TEMP/mediaforge-rendered.yaml"
+          if ! grep --fixed-strings --quiet "image: $IMAGE" "$RUNNER_TEMP/mediaforge-rendered.yaml"; then
+            echo "Release image was not substituted in the rendered manifest." >&2
+            exit 2
+          fi
+      - name: Validate release against target cluster
+        run: kubectl apply --server-side --dry-run=server -f "$RUNNER_TEMP/mediaforge-rendered.yaml"
+      - name: Apply approved release
+        if: ${{ inputs.mode == 'apply' }}
+        run: kubectl apply --server-side -f "$RUNNER_TEMP/mediaforge-rendered.yaml"

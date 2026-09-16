@@ -1,0 +1,26 @@
+# Copy this file to an environment-specific, non-versioned policy and add it to
+# kustomization.yaml. Replace every CIDR and only permit required destinations.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mediaforge-approved-external-egress
+  namespace: mediaforge
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mediaforge
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/8
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 9000

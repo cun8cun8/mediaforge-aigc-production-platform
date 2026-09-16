@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mediaforge-p1-spike"
+version = "0.1.0"
+description = "MediaForge P-1 technical research vertical slice"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.110",
+  "annotated-doc>=0.0.2",
+  "pydantic>=2.0",
+  "Pillow>=10.0",
+  "pypdf>=5.0",
+  "imageio-ffmpeg>=0.5.0",
+  "uvicorn>=0.30",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.27",
+  "pytest>=8.0",
+]
+
+enterprise = [
+  "boto3>=1.34",
+  "redis>=5.0",
+  "psycopg[binary]>=3.2",
+  "pgvector>=0.4.2,<0.5",
+]
+
+agents = [
+  "langgraph>=1.2,<2",
+  "langgraph-checkpoint-sqlite>=3.1,<4",
+  "langgraph-checkpoint-postgres>=3.1,<4",
+  "filelock>=3.16,<4",
+]
+
+[project.scripts]
+mediaforge = "mediaforge_p1.__main__:main"
+mediaforge-api-smoke = "mediaforge_p1.api_smoke:main"
+mediaforge-worker = "mediaforge_p1.worker:main"
+mediaforge-provider-probe = "mediaforge_p1.provider_probe:main"
+mediaforge-readiness = "mediaforge_p1.readiness:main"
+mediaforge-production-acceptance = "mediaforge_p1.acceptance:main"
+mediaforge-backup = "mediaforge_p1.recovery:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+mediaforge_p1 = ["static/*.html", "static/*.css", "static/*.js", "sql/*.sql"]

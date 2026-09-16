@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mediaforge-gpu-worker
+  labels:
+    app.kubernetes.io/name: mediaforge
+    app.kubernetes.io/component: gpu-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mediaforge
+      app.kubernetes.io/component: gpu-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mediaforge
+        app.kubernetes.io/component: gpu-worker
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: worker
+          image: ghcr.io/replace-me/mediaforge:replace-me
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+            - >-
+              exec mediaforge-worker --base-url http://mediaforge-api:8020
+              --worker-id "$POD_NAME" --concurrency 1
+              --execution-mode local-provider-callback
+              --artifact-root /var/lib/mediaforge/artifacts --poll-interval 5
+          envFrom:
+            - configMapRef:
+                name: mediaforge-runtime
+            - configMapRef:
+                name: mediaforge-provider
+                optional: true
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: MEDIAFORGE_API_BASE_URL
+              value: http://mediaforge-api:8020
+            - name: MEDIAFORGE_WORKER_EXECUTION_MODE
+              value: local-provider-callback
+            - name: MEDIAFORGE_WORKER_ARTIFACT_ROOT
+              value: /var/lib/mediaforge/artifacts
+            - name: MEDIAFORGE_WORKER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mediaforge-runtime
+                  key: worker-token
+            - name: MEDIAFORGE_CALLBACK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: mediaforge-runtime
+                  key: callback-secret
+          volumeMounts:
+            - name: mediaforge-data
+              mountPath: /var/lib/mediaforge
+          resources:
+            requests:
+              cpu: "1"
+              memory: 4Gi
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "4"
+              memory: 12Gi
+              nvidia.com/gpu: "1"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+      volumes:
+        - name: mediaforge-data
+          persistentVolumeClaim:
+            claimName: mediaforge-data

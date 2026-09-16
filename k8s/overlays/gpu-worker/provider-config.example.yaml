@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mediaforge-provider
+  namespace: mediaforge
+data:
+  MEDIAFORGE_PROVIDER: local
+  MEDIAFORGE_LOCAL_PROVIDER_COMMAND: /opt/mediaforge-provider/run.sh
+  MEDIAFORGE_LOCAL_PROVIDER_CAPABILITIES: image_generation,image_to_video
+  MEDIAFORGE_LOCAL_PROVIDER_TIMEOUT_SECONDS: "900"

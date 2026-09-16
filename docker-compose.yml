@@ -1,0 +1,83 @@
+services:
+  mediaforge:
+    build: .
+    ports:
+      - "8020:8020"
+    env_file:
+      - ${MEDIAFORGE_ENV_FILE:-.env}
+    environment:
+      MEDIAFORGE_ARTIFACT_ROOT: /var/lib/mediaforge/artifacts
+      MEDIAFORGE_STATE_BACKEND: ${MEDIAFORGE_STATE_BACKEND:-sqlite}
+      MEDIAFORGE_AUTH_MODE: ${MEDIAFORGE_AUTH_MODE:-required}
+      MEDIAFORGE_QUEUE_BACKEND: ${MEDIAFORGE_QUEUE_BACKEND:-sqlite}
+      MEDIAFORGE_RATE_LIMIT_BACKEND: sqlite
+      MEDIAFORGE_BILLING_DB: /var/lib/mediaforge/billing.sqlite3
+    volumes:
+      - mediaforge-data:/var/lib/mediaforge
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8020/health', timeout=4).close()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  mediaforge-worker:
+    build: .
+    profiles: ["worker"]
+    depends_on:
+      mediaforge:
+        condition: service_healthy
+    env_file:
+      - ${MEDIAFORGE_ENV_FILE:-.env}
+    environment:
+      MEDIAFORGE_API_BASE_URL: http://mediaforge:8020
+      MEDIAFORGE_WORKER_ID: ${MEDIAFORGE_WORKER_ID:-worker-compose}
+      MEDIAFORGE_WORKER_TOKEN: ${MEDIAFORGE_WORKER_TOKEN:-}
+      MEDIAFORGE_WORKER_CONCURRENCY: ${MEDIAFORGE_WORKER_CONCURRENCY:-2}
+    command:
+      [
+        "mediaforge-worker",
+        "--base-url",
+        "http://mediaforge:8020",
+        "--worker-id",
+        "${MEDIAFORGE_WORKER_ID:-worker-compose}",
+        "--concurrency",
+        "${MEDIAFORGE_WORKER_CONCURRENCY:-2}",
+        "--poll-interval",
+        "5"
+      ]
+    restart: unless-stopped
+
+  mediaforge-gpu-worker:
+    build: .
+    profiles: ["gpu-worker"]
+    depends_on:
+      mediaforge:
+        condition: service_healthy
+    env_file:
+      - ${MEDIAFORGE_ENV_FILE:-.env}
+    environment:
+      MEDIAFORGE_API_BASE_URL: http://mediaforge:8020
+      MEDIAFORGE_WORKER_EXECUTION_MODE: local-provider-callback
+      MEDIAFORGE_WORKER_ARTIFACT_ROOT: /var/lib/mediaforge/artifacts
+      MEDIAFORGE_WORKER_PROVIDER: ${MEDIAFORGE_WORKER_PROVIDER:-}
+      MEDIAFORGE_WORKER_CONCURRENCY: ${MEDIAFORGE_GPU_WORKER_CONCURRENCY:-1}
+    command:
+      [
+        "/bin/sh",
+        "-ec",
+        "exec mediaforge-worker --base-url http://mediaforge:8020 --worker-id $${HOSTNAME} --concurrency ${MEDIAFORGE_GPU_WORKER_CONCURRENCY:-1} --execution-mode local-provider-callback --artifact-root /var/lib/mediaforge/artifacts --poll-interval 5"
+      ]
+    volumes:
+      - mediaforge-data:/var/lib/mediaforge
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  mediaforge-data:

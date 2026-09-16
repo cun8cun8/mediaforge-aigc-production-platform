@@ -1,0 +1,105 @@
+name: MediaForge CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mediaforge-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install runtime and test dependencies
+        run: python -m pip install -e ".[dev,enterprise,agents]"
+      - name: Compile Python
+        run: python -m compileall -q src tests
+      - name: Check read-only load script syntax
+        run: node --check ops/load/studio-readonly.mjs
+      - name: Run Python regression suite
+        run: python -m pytest -q
+
+  manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-kubectl@v4
+      - name: Validate Compose topologies
+        env:
+          MEDIAFORGE_ENV_FILE: .env.example
+          MEDIAFORGE_POSTGRES_PASSWORD: ci-validation-only
+          MEDIAFORGE_MINIO_ROOT_USER: ci-validation-only
+          MEDIAFORGE_MINIO_ROOT_PASSWORD: ci-validation-only
+        run: |
+          docker compose --env-file .env.example -f docker-compose.yml config --quiet
+          docker compose --env-file .env.example -f docker-compose.yml --profile gpu-worker config --quiet
+          docker compose --env-file .env.example -f docker-compose.ha.yml config --quiet
+          docker compose --env-file .env.example -f docker-compose.ha.yml --profile gpu-worker config --quiet
+      - name: Render Kubernetes overlays
+        run: |
+          kubectl kustomize k8s/base > /dev/null
+          kubectl kustomize k8s/overlays/gpu-worker > /dev/null
+          kubectl kustomize k8s/overlays/locked-down > /dev/null
+      - name: Build production image
+        run: docker build --tag mediaforge-ci:${{ github.sha }} .
+
+  ui:
+    needs: python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install application and browser dependencies
+        run: |
+          python -m pip install -e ".[enterprise,agents]"
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Run Chinese Studio browser acceptance
+        env:
+          MEDIAFORGE_AUTH_MODE: disabled
+          MEDIAFORGE_PROVIDER: mock
+          MEDIAFORGE_CALLBACK_SECRET: ci-callback-secret
+          MEDIAFORGE_ARTIFACT_ROOT: ${{ runner.temp }}/mediaforge-artifacts
+          MEDIAFORGE_RATE_LIMIT_ENABLED: "false"
+          MEDIAFORGE_PLANNING_MODE: langgraph
+          MEDIAFORGE_LLM_MODE: disabled
+          MEDIAFORGE_UI_URL: http://127.0.0.1:8020
+        run: |
+          python -m uvicorn mediaforge_p1.api:app --host 127.0.0.1 --port 8020 > "$RUNNER_TEMP/mediaforge-api.log" 2>&1 &
+          api_pid=$!
+          trap 'kill "$api_pid" || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8020/livez > /dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8020/livez > /dev/null
+          npm run test:ui
+          npm run test:ui:narrative
+          npm run test:ui:planning
+      - name: Upload UI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-acceptance-${{ github.run_id }}
+          path: |
+            artifacts/ui-acceptance
+            ${{ runner.temp }}/mediaforge-api.log
+          if-no-files-found: warn

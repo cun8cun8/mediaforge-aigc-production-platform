@@ -1,0 +1,64 @@
+# This optional job verifies an externally created, immutable backup bundle.
+# It is deliberately not referenced by any Kustomization: replace the image,
+# backup PVC name, schedule, and RPO before applying it to an environment.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mediaforge-backup-verifier
+  namespace: mediaforge
+  labels:
+    app.kubernetes.io/name: mediaforge
+    app.kubernetes.io/component: backup-verifier
+spec:
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 6
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      ttlSecondsAfterFinished: 604800
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: mediaforge
+            app.kubernetes.io/component: backup-verifier
+        spec:
+          restartPolicy: Never
+          securityContext:
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: verifier
+              image: ghcr.io/replace-me/mediaforge:replace-me
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  bundle="$(find /backups -mindepth 1 -maxdepth 1 -type d -name 'mediaforge-backup-*' -print | sort | tail -n 1)"
+                  test -n "$bundle"
+                  mediaforge-backup report --bundle "$bundle" --max-age-hours "$MEDIAFORGE_BACKUP_MAX_AGE_HOURS"
+              env:
+                - name: MEDIAFORGE_BACKUP_MAX_AGE_HOURS
+                  value: "48"
+              volumeMounts:
+                - name: backups
+                  mountPath: /backups
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 250m
+                  memory: 256Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+          volumes:
+            - name: backups
+              persistentVolumeClaim:
+                # Create this PVC through the organization's backup system.
+                claimName: mediaforge-backups
