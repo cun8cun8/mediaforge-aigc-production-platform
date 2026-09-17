@@ -14,7 +14,11 @@ from uuid import uuid4
 import pytest
 from PIL import Image
 
-from mediaforge_p1.comfyui import ComfyUIProvider, ComfyWorkflowDefinition
+from mediaforge_p1.comfyui import (
+    ComfyUIProvider,
+    ComfyUIProviderError,
+    ComfyWorkflowDefinition,
+)
 from mediaforge_p1.comfyui_preflight import preflight_comfyui_registry
 from mediaforge_p1.delivery import DeliveryDispatcher
 from mediaforge_p1.enterprise_runtime import (
@@ -630,6 +634,89 @@ def test_comfyui_provider_submits_polls_and_downloads_output(tmp_path: Path) -> 
     assert Path(artifact.uri).read_bytes() == png_path.read_bytes()
 
 
+def test_comfyui_provider_marks_reviewed_video_output_as_video(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    provider = ComfyUIProvider(
+        base_url="http://127.0.0.1:8188",
+        workflow={"1": {"class_type": "TestNode", "inputs": {}}},
+        capabilities={Capability.IMAGE_TO_VIDEO},
+    )
+    monkeypatch.setattr(
+        provider,
+        "_request_json",
+        lambda *_args, **_kwargs: {"prompt_id": "video-prompt"},
+    )
+    monkeypatch.setattr(
+        provider,
+        "_poll_history",
+        lambda *_args, **_kwargs: (
+            {
+                "outputs": {
+                    "7": {
+                        "videos": [
+                            {
+                                "filename": "reviewed-shot.mp4",
+                                "subfolder": "",
+                                "type": "output",
+                            }
+                        ]
+                    }
+                }
+            },
+            [{"state": "SUCCEEDED"}],
+        ),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_request_bytes",
+        lambda *_args, **_kwargs: b"video-bytes",
+    )
+
+    artifact = provider.generate(
+        make_spec(capability=Capability.IMAGE_TO_VIDEO),
+        job_id="job_comfyui_video",
+        output_dir=tmp_path / "downloaded",
+    )
+
+    assert artifact.kind == "video"
+    assert artifact.mime_type == "video/mp4"
+    assert Path(artifact.uri).read_bytes() == b"video-bytes"
+
+
+def test_comfyui_provider_rejects_a_template_for_the_wrong_capability(
+    tmp_path: Path,
+) -> None:
+    provider = ComfyUIProvider(
+        base_url="http://127.0.0.1:8188",
+        workflow={},
+        workflows={
+            "comfyui_video:reviewed:v1": ComfyWorkflowDefinition(
+                template_id="comfyui_video:reviewed:v1",
+                workflow={"1": {"class_type": "TestNode", "inputs": {}}},
+                capabilities=(Capability.IMAGE_TO_VIDEO,),
+            )
+        },
+        capabilities={Capability.IMAGE_GENERATION, Capability.IMAGE_TO_VIDEO},
+    )
+    image_spec = make_spec(capability=Capability.IMAGE_GENERATION).model_copy(
+        update={
+            "workflow": WorkflowSpec(
+                template_id="comfyui_video:reviewed:v1",
+                controlnet=ControlNet(enabled=False, strength=0),
+            )
+        }
+    )
+
+    with pytest.raises(ComfyUIProviderError, match="does not declare image_generation"):
+        provider.generate(
+            image_spec,
+            job_id="job_wrong_comfyui_capability",
+            output_dir=tmp_path / "downloaded",
+        )
+
+
 def test_comfyui_provider_uploads_local_reference_before_prompt(
     tmp_path: Path,
 ) -> None:
@@ -933,6 +1020,60 @@ def test_comfyui_registry_requires_an_explicit_default_when_multiple(
     assert selected.details["default_template_id"] == "comfyui_image:wide:v1"
 
 
+def test_comfyui_registry_selects_reviewed_video_template_separately(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    image_workflow = tmp_path / "image.json"
+    video_workflow = tmp_path / "video.json"
+    for path in (image_workflow, video_workflow):
+        path.write_text(
+            json.dumps({"1": {"class_type": "TestNode", "inputs": {}}}),
+            encoding="utf-8",
+        )
+    registry_path = tmp_path / "registry.json"
+    registry_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "mediaforge-comfyui-workflow-registry-v1",
+                "workflows": [
+                    {
+                        "template_id": "comfyui_image:reviewed:v1",
+                        "path": image_workflow.name,
+                        "version": "1",
+                        "sha256": sha256_file(image_workflow),
+                        "capabilities": ["image_generation"],
+                    },
+                    {
+                        "template_id": "comfyui_video:reviewed:v1",
+                        "path": video_workflow.name,
+                        "version": "1",
+                        "sha256": sha256_file(video_workflow),
+                        "capabilities": ["image_to_video"],
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MEDIAFORGE_PROVIDER", "comfyui")
+    monkeypatch.delenv("MEDIAFORGE_PROVIDERS", raising=False)
+    monkeypatch.setenv("COMFYUI_WORKFLOW_REGISTRY_PATH", str(registry_path))
+    monkeypatch.setenv("COMFYUI_REQUIRE_WORKFLOW_PIN", "true")
+
+    bundle = build_provider_from_env()
+    report = preflight_comfyui_registry(registry_path)
+
+    assert bundle.configured is True
+    assert bundle.capabilities == ["image_generation", "image_to_video"]
+    assert bundle.details["default_template_id"] == "comfyui_image:reviewed:v1"
+    assert bundle.details["default_video_template_id"] == "comfyui_video:reviewed:v1"
+    assert bundle.provider.supports(Capability.IMAGE_TO_VIDEO) is True
+    assert report["default_template_id"] == "comfyui_image:reviewed:v1"
+    assert report["default_video_template_id"] == "comfyui_video:reviewed:v1"
+    assert report["capabilities"] == ["image_generation", "image_to_video"]
+
+
 def test_comfyui_preflight_reports_pinned_registry_without_provider_call(
     tmp_path: Path,
 ) -> None:
@@ -976,6 +1117,7 @@ def test_comfyui_preflight_reports_pinned_registry_without_provider_call(
             "model_requirements": [
                 {"folder": "checkpoints", "name": "reviewed.safetensors"}
             ],
+            "capabilities": ["image_generation"],
         }
     ]
 

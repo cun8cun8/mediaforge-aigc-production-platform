@@ -74,6 +74,7 @@ if (-not (Test-Path -LiteralPath $hostRegistryPath -PathType Leaf)) {
 $repositoryRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $composePath = Join-Path $repositoryRoot "docker-compose.staging.yml"
 $defaultTemplateId = [string]$providerValues["MEDIAFORGE_IMAGE_WORKFLOW_TEMPLATE_ID"]
+$videoTemplateId = [string]$providerValues["MEDIAFORGE_VIDEO_WORKFLOW_TEMPLATE_ID"]
 $preflightArgs = @(
     "compose", "-f", $composePath, "run", "--rm", "--no-deps",
     "--entrypoint", "python", "mediaforge", "-m", "mediaforge_p1.comfyui_preflight",
@@ -81,6 +82,9 @@ $preflightArgs = @(
 )
 if ($defaultTemplateId) {
     $preflightArgs += @("--default-template-id", $defaultTemplateId)
+}
+if ($videoTemplateId) {
+    $preflightArgs += @("--video-template-id", $videoTemplateId)
 }
 Write-Output "Validating pinned ComfyUI registry without contacting the Provider."
 & docker @preflightArgs
@@ -127,7 +131,9 @@ $summary = [ordered]@{
     configured = [bool]$comfyStatus.configured
     reachable = [bool]$comfyHealth.reachable
     healthy = [bool]$comfyHealth.healthy
-    selected_template = $comfyStatus.details.default_template_id
+    selected_image_template = $comfyStatus.details.default_template_id
+    selected_video_template = $comfyStatus.details.default_video_template_id
+    capabilities = @($comfyStatus.details.workflow_capabilities)
     workflow_count = $workflowRows.Count
     declared_model_requirements = @($workflowRows | ForEach-Object { @($_.model_requirements) }).Count
     callback_authentication = [bool]$diagnostics.callback_security.configured

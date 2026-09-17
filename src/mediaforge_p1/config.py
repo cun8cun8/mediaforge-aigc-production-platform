@@ -121,6 +121,28 @@ def _model_requirements(raw: Any) -> tuple[dict[str, str], ...]:
     return tuple(requirements)
 
 
+def _workflow_capabilities(raw: Any) -> tuple[Capability, ...]:
+    if raw is None:
+        return (Capability.IMAGE_GENERATION,)
+    values = raw.split(",") if isinstance(raw, str) else raw
+    if not isinstance(values, list):
+        raise ValueError("ComfyUI workflow capabilities must be a list or comma-separated string")
+    capabilities: list[Capability] = []
+    for index, value in enumerate(values):
+        try:
+            capability = Capability(str(value).strip())
+        except ValueError as exc:
+            supported = ", ".join(item.value for item in Capability)
+            raise ValueError(
+                f"ComfyUI workflow capability {index} is invalid; supported: {supported}"
+            ) from exc
+        if capability not in capabilities:
+            capabilities.append(capability)
+    if not capabilities:
+        raise ValueError("ComfyUI workflow capabilities must contain at least one capability")
+    return tuple(capabilities)
+
+
 def _workflow_definition(
     path: Path,
     *,
@@ -128,6 +150,7 @@ def _workflow_definition(
     version: str | None,
     pinned_sha256: str | None,
     model_requirements: Any = None,
+    capabilities: Any = None,
     require_pin: bool = False,
 ) -> ComfyWorkflowDefinition:
     payload = _load_workflow(path)
@@ -158,6 +181,9 @@ def _workflow_definition(
             model_requirements
             if model_requirements is not None
             else metadata.get("model_requirements")
+        ),
+        capabilities=_workflow_capabilities(
+            capabilities if capabilities is not None else metadata.get("capabilities")
         ),
     )
 
@@ -207,6 +233,7 @@ def load_comfyui_workflow_registry(
             version=str(entry.get("version") or "").strip() or None,
             pinned_sha256=str(entry.get("sha256") or "").strip() or None,
             model_requirements=entry.get("model_requirements"),
+            capabilities=entry.get("capabilities"),
             require_pin=require_pin,
         )
         if definition.template_id in definitions:
@@ -215,13 +242,15 @@ def load_comfyui_workflow_registry(
     return definitions
 
 
-def select_comfyui_image_template(
+def select_comfyui_template(
     workflows: dict[str, ComfyWorkflowDefinition],
     default_workflow: ComfyWorkflowDefinition | None,
     *,
+    capability: Capability,
     default_template_id: str | None = None,
+    environment_variable: str,
 ) -> str:
-    """Choose the reviewed graph used by platform-created image jobs.
+    """Choose the reviewed graph used by a platform generation capability.
 
     A registry can hold several reviewed graphs, but the normal production
     workflow does not let an Agent choose arbitrary graph names. Requiring an
@@ -231,28 +260,73 @@ def select_comfyui_image_template(
     configured = (
         default_template_id
         if default_template_id is not None
-        else os.getenv("MEDIAFORGE_IMAGE_WORKFLOW_TEMPLATE_ID", "")
+        else os.getenv(environment_variable, "")
     ).strip()
     if workflows:
+        eligible = {
+            template_id: definition
+            for template_id, definition in workflows.items()
+            if capability in definition.capabilities
+        }
+        if not eligible:
+            raise ValueError(
+                "no reviewed ComfyUI workflow declares capability "
+                f"{capability.value}"
+            )
         if configured:
-            if configured not in workflows:
-                available = ", ".join(sorted(workflows))
+            if configured not in eligible:
+                available = ", ".join(sorted(eligible))
                 raise ValueError(
-                    "MEDIAFORGE_IMAGE_WORKFLOW_TEMPLATE_ID is not registered: "
+                    f"{environment_variable} is not registered for {capability.value}: "
                     f"{configured!r}; available: {available}"
                 )
             return configured
-        if len(workflows) == 1:
-            return next(iter(workflows))
-        available = ", ".join(sorted(workflows))
+        if len(eligible) == 1:
+            return next(iter(eligible))
+        available = ", ".join(sorted(eligible))
         raise ValueError(
-            "multiple ComfyUI workflows are registered; set "
-            "MEDIAFORGE_IMAGE_WORKFLOW_TEMPLATE_ID to one of: "
+            f"multiple ComfyUI workflows declare {capability.value}; set "
+            f"{environment_variable} to one of: "
             f"{available}"
         )
     if default_workflow is None:  # pragma: no cover - defensive invariant
         raise ValueError("ComfyUI default workflow is not configured")
+    if capability not in default_workflow.capabilities:
+        raise ValueError(
+            "ComfyUI default workflow does not declare capability "
+            f"{capability.value}"
+        )
     return default_workflow.template_id
+
+
+def select_comfyui_image_template(
+    workflows: dict[str, ComfyWorkflowDefinition],
+    default_workflow: ComfyWorkflowDefinition | None,
+    *,
+    default_template_id: str | None = None,
+) -> str:
+    return select_comfyui_template(
+        workflows,
+        default_workflow,
+        capability=Capability.IMAGE_GENERATION,
+        default_template_id=default_template_id,
+        environment_variable="MEDIAFORGE_IMAGE_WORKFLOW_TEMPLATE_ID",
+    )
+
+
+def select_comfyui_video_template(
+    workflows: dict[str, ComfyWorkflowDefinition],
+    default_workflow: ComfyWorkflowDefinition | None,
+    *,
+    default_template_id: str | None = None,
+) -> str:
+    return select_comfyui_template(
+        workflows,
+        default_workflow,
+        capability=Capability.IMAGE_TO_VIDEO,
+        default_template_id=default_template_id,
+        environment_variable="MEDIAFORGE_VIDEO_WORKFLOW_TEMPLATE_ID",
+    )
 
 
 def _env_float(
@@ -365,15 +439,34 @@ def _build_provider_for_mode(mode: str) -> ProviderBundle:
                     ).strip(),
                     version=os.getenv("COMFYUI_WORKFLOW_VERSION", "").strip() or None,
                     pinned_sha256=os.getenv("COMFYUI_WORKFLOW_SHA256", "").strip() or None,
+                    capabilities=os.getenv("COMFYUI_CAPABILITIES", "").strip() or None,
                     require_pin=require_pin,
                 )
                 details["workflow"] = workflow.provenance_view(
                     requested_template_id=workflow.template_id
                 )
-            details["default_template_id"] = select_comfyui_image_template(
-                workflows,
-                workflow,
+            configured_capabilities = set()
+            for definition in workflows.values():
+                configured_capabilities.update(definition.capabilities)
+            if workflow is not None:
+                configured_capabilities.update(workflow.capabilities)
+            if not configured_capabilities:  # pragma: no cover - registry invariant
+                raise ValueError("ComfyUI workflow registry declares no capabilities")
+            image_template = (
+                select_comfyui_image_template(workflows, workflow)
+                if Capability.IMAGE_GENERATION in configured_capabilities
+                else None
             )
+            video_template = (
+                select_comfyui_video_template(workflows, workflow)
+                if Capability.IMAGE_TO_VIDEO in configured_capabilities
+                else None
+            )
+            details["default_template_id"] = image_template
+            details["default_video_template_id"] = video_template
+            details["workflow_capabilities"] = [
+                item.value for item in sorted(configured_capabilities, key=lambda item: item.value)
+            ]
             timeout_seconds = _env_float(
                 "COMFYUI_TIMEOUT_SECONDS",
                 60.0,
@@ -418,11 +511,12 @@ def _build_provider_for_mode(mode: str) -> ProviderBundle:
                 estimated_cost=estimated_cost,
                 workflows=workflows,
                 default_workflow=None if workflows else workflow,
+                capabilities=configured_capabilities,
             ),
             mode=mode,
             configured=True,
             message="ComfyUI workflow is configured.",
-            capabilities=[Capability.IMAGE_GENERATION],
+            capabilities=[item.value for item in sorted(configured_capabilities, key=lambda item: item.value)],
             details=details,
         )
 

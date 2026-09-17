@@ -42,6 +42,7 @@ production template pool, set `COMFYUI_WORKFLOW_REGISTRY_PATH` to a registry:
       "path": "cinematic-v2.json",
       "version": "2026.09.15",
       "sha256": "a-64-character-lowercase-sha256-digest",
+      "capabilities": ["image_generation"],
       "model_requirements": [
         {"folder": "checkpoints", "name": "cinematic-v2.safetensors"},
         {"folder": "vae", "name": "cinematic-vae.safetensors"}
@@ -59,6 +60,12 @@ model inventory and image digest in deployment configuration as well. Workflow
 files must resolve inside the registry directory; parent-directory traversal,
 absolute paths outside that directory and symlink escapes are rejected.
 
+`capabilities` is optional for backward compatibility and defaults to
+`["image_generation"]`. A reviewed `image_to_video` graph must declare
+`["image_to_video"]` and produce a downloadable `video/*` file, such as MP4
+or WebM. A still image, GIF, or unknown file is rejected instead of being
+mislabelled as a video artifact.
+
 For platform-created image jobs, the registry must resolve one reviewed default
 template. A single-entry registry is selected automatically. For more than one
 entry, set `MEDIAFORGE_IMAGE_WORKFLOW_TEMPLATE_ID` to an exact registry
@@ -66,6 +73,11 @@ entry, set `MEDIAFORGE_IMAGE_WORKFLOW_TEMPLATE_ID` to an exact registry
 for a billable job to fail at the Provider. Shot revisions and A/B candidates
 retain that approved graph identity and record `generation_revision` or
 `ab_variant` in the immutable generation spec.
+
+Image and video defaults are selected independently. If a registry contains
+multiple `image_to_video` graphs, set
+`MEDIAFORGE_VIDEO_WORKFLOW_TEMPLATE_ID` to its exact reviewed `template_id`.
+A registry with one image graph and one video graph needs neither selector.
 
 Registry membership is an execution approval, not a rights grant. A configured
 reviewed template root is allowed through the workflow gate, but a release
@@ -150,11 +162,10 @@ The artifact `metadata_uri` is included in the asset inventory, trace,
 Provenance report, and delivery ZIP. It provides the local execution receipt
 without exposing credentials.
 
-This adapter exposes `image_generation`. The short-drama P0 path can route to
-that image capability, validate the result with the shared media quality gate,
-and normalize image artifacts into the final MP4 export. The video path still
-remains handled by the Mock or Replicate Provider until a reviewed ComfyUI
-video workflow is added.
+The adapter exposes the capabilities declared by the reviewed registry. Image
+artifacts can be normalized into the final MP4 export; an `image_to_video`
+workflow returns a video artifact and proceeds through the shared video quality
+gate. An unreviewed graph cannot enable either capability.
 
 ## Approved cost-bearing probe
 
@@ -174,3 +185,15 @@ This command sends `POST /prompt` and can consume GPU capacity. Its manifest
 records the selected workflow version, SHA-256, output artifact and quality
 gate result. Do not run it from CI or before a cost owner has approved the
 workflow and model inventory.
+
+For a reviewed video graph, record the tested capability explicitly:
+
+```powershell
+mediaforge-provider-probe `
+  --provider comfyui `
+  --registry D:\secure-config\comfyui-workflow-registry.json `
+  --template-id comfyui_video:reviewed:v1 `
+  --capability image_to_video `
+  --require-workflow-pin `
+  --output artifacts/provider-probe-video
+```

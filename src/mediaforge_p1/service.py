@@ -16198,26 +16198,30 @@ class MediaForgeService:
 
     def _preferred_capability(self) -> Capability:
         supported: set[Capability] = set()
-        for capability in (Capability.IMAGE_GENERATION, Capability.IMAGE_TO_VIDEO):
-            try:
-                if self.provider.supports(capability):
-                    supported.add(capability)
-            except Exception:
-                continue
-
         raw_capabilities = self.provider_status.get("capabilities") or []
-        for capability in raw_capabilities:
-            try:
-                supported.add(
-                    capability
-                    if isinstance(capability, Capability)
-                    else Capability(capability)
-                )
-            except Exception:
-                continue
-
         mode = str(self.provider_status.get("mode") or "").strip().lower()
-        if mode == "comfyui" and Capability.IMAGE_GENERATION in supported:
+        if mode == "comfyui" and isinstance(raw_capabilities, list):
+            for capability in raw_capabilities:
+                try:
+                    supported.add(
+                        capability
+                        if isinstance(capability, Capability)
+                        else Capability(capability)
+                    )
+                except ValueError:
+                    continue
+        if not supported:
+            for capability in (Capability.IMAGE_GENERATION, Capability.IMAGE_TO_VIDEO):
+                try:
+                    if self.provider.supports(capability):
+                        supported.add(capability)
+                except Exception:
+                    continue
+        if (
+            mode == "comfyui"
+            and Capability.IMAGE_GENERATION in supported
+            and Capability.IMAGE_TO_VIDEO not in supported
+        ):
             return Capability.IMAGE_GENERATION
         if Capability.IMAGE_TO_VIDEO in supported and Capability.IMAGE_GENERATION not in supported:
             return Capability.IMAGE_TO_VIDEO
@@ -16243,6 +16247,9 @@ class MediaForgeService:
             if mode == "comfyui":
                 return "comfyui_image:v1"
             return "p0_mock_i2v:v1"
+        selected = str(details.get("default_video_template_id") or "").strip()
+        if selected:
+            return selected
         configured = os.getenv("MEDIAFORGE_VIDEO_WORKFLOW_TEMPLATE_ID", "").strip()
         if configured:
             return configured

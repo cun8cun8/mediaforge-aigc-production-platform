@@ -32,6 +32,7 @@ class ComfyWorkflowDefinition:
     version: str | None = None
     sha256: str | None = None
     model_requirements: tuple[dict[str, str], ...] = ()
+    capabilities: tuple[Capability, ...] = (Capability.IMAGE_GENERATION,)
 
     def provenance_view(self, *, requested_template_id: str) -> dict[str, Any]:
         return {
@@ -41,6 +42,7 @@ class ComfyWorkflowDefinition:
             "sha256": self.sha256,
             "source_path": self.source_path,
             "model_requirements": [dict(item) for item in self.model_requirements],
+            "capabilities": [capability.value for capability in self.capabilities],
         }
 
 
@@ -56,10 +58,13 @@ class ComfyUIProvider:
     client_id: str = field(default_factory=lambda: f"mediaforge-{uuid4().hex}")
     workflows: dict[str, ComfyWorkflowDefinition] = field(default_factory=dict)
     default_workflow: ComfyWorkflowDefinition | None = None
+    capabilities: set[Capability] = field(
+        default_factory=lambda: {Capability.IMAGE_GENERATION}
+    )
     name: str = "comfyui"
 
     def supports(self, capability: Capability) -> bool:
-        return capability == Capability.IMAGE_GENERATION
+        return capability in self.capabilities
 
     def estimate_cost(self, spec: GenerationSpec) -> float:
         return self.estimated_cost
@@ -162,10 +167,17 @@ class ComfyUIProvider:
         capability = spec.provider_constraints.capability
         if not self.supports(capability):
             raise ComfyUIProviderError(
-                f"ComfyUI adapter currently supports image_generation, got {capability}"
+                "ComfyUI adapter does not support "
+                f"{capability}; configured: {', '.join(sorted(item.value for item in self.capabilities))}"
             )
 
         definition = self._workflow_for(spec)
+        if capability not in definition.capabilities:
+            declared = ", ".join(item.value for item in definition.capabilities)
+            raise ComfyUIProviderError(
+                "reviewed ComfyUI workflow does not declare "
+                f"{capability.value}: {definition.template_id} (declared: {declared})"
+            )
         uploaded_reference = self._prepare_reference_image(spec, definition.workflow)
         prompt_graph = self._build_prompt_graph(
             spec,
@@ -233,10 +245,20 @@ class ComfyUIProvider:
             encoding="utf-8",
         )
         mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        artifact_kind = "image"
+        if capability == Capability.IMAGE_TO_VIDEO:
+            if not mime_type.startswith("video/"):
+                output_path.unlink(missing_ok=True)
+                metadata_path.unlink(missing_ok=True)
+                raise ComfyUIProviderError(
+                    "ComfyUI image_to_video workflow did not produce a video output: "
+                    f"{filename} ({mime_type})"
+                )
+            artifact_kind = "video"
         return Artifact(
             artifact_id=f"artifact_{uuid4().hex[:12]}",
             job_id=job_id,
-            kind="image",
+            kind=artifact_kind,
             uri=str(output_path),
             mime_type=mime_type,
             sha256=sha256_file(output_path),
@@ -269,6 +291,7 @@ class ComfyUIProvider:
         return self.default_workflow or ComfyWorkflowDefinition(
             template_id="legacy-default",
             workflow=self.workflow,
+            capabilities=tuple(sorted(self.capabilities, key=lambda item: item.value)),
         )
 
     def _build_prompt_graph(

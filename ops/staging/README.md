@@ -45,7 +45,7 @@ The base stack intentionally uses `mock`. After assigning a cost owner, collecti
 
 1. Place the workflow registry and referenced workflow JSON files under `ops/staging/provider-config/`.
 2. Copy `.env.provider.comfyui.example` to the ignored `.env.provider` file and set the reachable `COMFYUI_BASE_URL`.
-3. Pin every registry entry with a version and SHA-256; retain its model inventory. If the registry has more than one graph, set `MEDIAFORGE_IMAGE_WORKFLOW_TEMPLATE_ID` to the exact reviewed `template_id` used for platform-created image jobs.
+3. Pin every registry entry with a version and SHA-256; retain its model inventory. Declare `capabilities` for new entries (`image_generation` or `image_to_video`); legacy entries remain image-only. If a capability has more than one graph, set its exact reviewed default with `MEDIAFORGE_IMAGE_WORKFLOW_TEMPLATE_ID` or `MEDIAFORGE_VIDEO_WORKFLOW_TEMPLATE_ID`.
 4. Validate the mounted registry before restarting. This command only reads JSON and validates SHA-256 pins; it does not contact ComfyUI or submit a media job:
 
 ```powershell

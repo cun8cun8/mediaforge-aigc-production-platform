@@ -85,6 +85,7 @@ def build_provider(
     *,
     registry_path: Path | None = None,
     require_workflow_pin: bool = False,
+    capabilities: set[Capability] | None = None,
 ) -> GenerationProvider:
     if provider_name == "comfyui":
         if registry_path is not None:
@@ -96,12 +97,18 @@ def build_provider(
                 base_url=os.getenv("COMFYUI_BASE_URL", "http://127.0.0.1:8188"),
                 workflow={},
                 workflows=workflows,
+                capabilities={
+                    capability
+                    for definition in workflows.values()
+                    for capability in definition.capabilities
+                },
             )
         if workflow_path is None:
             raise ValueError("--workflow or --registry is required for --provider comfyui")
         return ComfyUIProvider(
             base_url=os.getenv("COMFYUI_BASE_URL", "http://127.0.0.1:8188"),
             workflow=load_workflow(workflow_path),
+            capabilities=capabilities or {Capability.IMAGE_GENERATION},
         )
 
     if provider_name == "local":
@@ -158,8 +165,17 @@ def run_provider_probe(
         workflow_path,
         registry_path=registry_path,
         require_workflow_pin=require_workflow_pin,
+        capabilities={capability}
+        if provider_name == "comfyui" and capability is not None
+        else None,
     )
-    if capability is None and provider_name == "local":
+    if capability is None and provider_name == "comfyui":
+        capability = (
+            Capability.IMAGE_GENERATION
+            if provider.supports(Capability.IMAGE_GENERATION)
+            else Capability.IMAGE_TO_VIDEO
+        )
+    elif capability is None and provider_name == "local":
         raw = os.getenv("MEDIAFORGE_LOCAL_PROVIDER_CAPABILITIES", "image_generation,image_to_video").split(",")
         capability = Capability(raw[0].strip())
     spec = build_probe_spec(

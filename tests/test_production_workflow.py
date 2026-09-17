@@ -230,3 +230,29 @@ def test_reviewed_comfy_registry_root_is_allowed_but_still_requires_license(
         <= item.items()
         for item in checks["license_registry"]["observed"]
     )
+
+
+def test_comfyui_video_capability_selects_the_reviewed_video_template(tmp_path):
+    service = MediaForgeService(tmp_path)
+    service.set_provider_status(
+        {
+            "mode": "comfyui",
+            "provider": "comfyui",
+            "configured": True,
+            "message": "ComfyUI image and video workflows are configured.",
+            "capabilities": ["image_generation", "image_to_video"],
+            "details": {
+                "default_template_id": "comfyui_image:reviewed:v3",
+                "default_video_template_id": "comfyui_video:reviewed:v3",
+            },
+        }
+    )
+    service.create_project(brief("workflow_comfy_video_template"))
+
+    plan = service.generate_plan("workflow_comfy_video_template")
+    runtime = service.projects["workflow_comfy_video_template"].shots[
+        plan["shots"][0]["shot"]["shot_id"]
+    ]
+
+    assert runtime.spec.provider_constraints.capability.value == "image_to_video"
+    assert runtime.spec.workflow.template_id == "comfyui_video:reviewed:v3"

@@ -375,7 +375,9 @@ template pool, use `COMFYUI_WORKFLOW_REGISTRY_PATH` and set
 `COMFYUI_REQUIRE_WORKFLOW_PIN=true`; every registry entry then needs a version
 and an expected SHA-256. MediaForge validates the graph bytes during startup,
 requires `MEDIAFORGE_IMAGE_WORKFLOW_TEMPLATE_ID` when a registry has more than
-one image graph, routes platform-created shots to that reviewed `template_id`, and includes the selected graph identity and
+one image graph or `MEDIAFORGE_VIDEO_WORKFLOW_TEMPLATE_ID` when it has more
+than one `image_to_video` graph, routes platform-created shots to that reviewed
+`template_id`, and includes the selected graph identity and
 ComfyUI queue/execution timeline in each artifact sidecar. See
 `docs/comfyui-provider.md` for the registry format.
 

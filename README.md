@@ -123,11 +123,11 @@ flowchart LR
 | Provider | 适用能力 | 关键配置 | 生产建议 |
 | --- | --- | --- | --- |
 | `mock` | 本地闭环验证 | `MEDIAFORGE_PROVIDER=mock` | 仅开发与演示 |
-| `comfyui` | 图像生成 | `COMFYUI_BASE_URL`、审核后的工作流注册表 | 固定 workflow 版本和 SHA-256 |
+| `comfyui` | 审核后的图像生成、图生视频 | `COMFYUI_BASE_URL`、审核后的工作流注册表 | 固定 workflow 版本、SHA-256 与能力声明 |
 | `replicate` | 图生视频 | `REPLICATE_API_TOKEN`、固定 `REPLICATE_MODEL_VERSION` | 预算限额、回调与失败策略 |
 | `local` | 自建 GPU 模型 | `MEDIAFORGE_LOCAL_PROVIDER_COMMAND` | 用独立 Worker 镜像运行模型 |
 
-推荐的生产路由是 `comfyui,replicate`：本地或私有网络完成图像生产，云端承担图生视频；也可通过 `local` 接入经审核的自建模型。ComfyUI 当前适配 `image_generation`，Replicate 当前适配 `image_to_video`，不要将二者的能力误配。
+推荐的生产路由是 `comfyui,replicate`：本地或私有网络完成审核后的图像或视频生产，云端作为图生视频备选；也可通过 `local` 接入经审核的自建模型。ComfyUI 只暴露其注册表条目声明的 `image_generation`、`image_to_video` 能力，Replicate 当前适配 `image_to_video`，不要将模板与能力误配。
 
 ```powershell
 $env:MEDIAFORGE_PROVIDERS = "comfyui,replicate"
@@ -135,12 +135,14 @@ $env:COMFYUI_BASE_URL = "http://comfyui.internal:8188"
 $env:COMFYUI_WORKFLOW_REGISTRY_PATH = "D:\secure-config\comfyui-workflow-registry.json"
 $env:COMFYUI_REQUIRE_WORKFLOW_PIN = "true"
 $env:MEDIAFORGE_IMAGE_WORKFLOW_TEMPLATE_ID = "comfyui_image:reviewed:v1"
+$env:MEDIAFORGE_VIDEO_WORKFLOW_TEMPLATE_ID = "comfyui_video:reviewed:v1"
 $env:REPLICATE_API_TOKEN = "<from-secret-manager>"
 $env:REPLICATE_MODEL_VERSION = "<approved-pinned-model-version>"
 $env:MEDIAFORGE_CALLBACK_SECRET = "<long-random-secret>"
 
 mediaforge-comfyui-preflight --registry D:\secure-config\comfyui-workflow-registry.json
 python -m mediaforge_p1.provider_probe --provider comfyui --registry D:\secure-config\comfyui-workflow-registry.json --template-id comfyui_image:reviewed:v1 --require-workflow-pin
+python -m mediaforge_p1.provider_probe --provider comfyui --registry D:\secure-config\comfyui-workflow-registry.json --template-id comfyui_video:reviewed:v1 --capability image_to_video --require-workflow-pin
 python -m mediaforge_p1.provider_probe --provider replicate
 ```
 
