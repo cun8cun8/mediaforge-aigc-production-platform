@@ -1,0 +1,64 @@
+services:
+  mediaforge:
+    env_file:
+      - path: ./ops/staging/.env.c2pa
+        required: true
+    depends_on:
+      c2pa-signer:
+        condition: service_healthy
+      c2pa-verifier:
+        condition: service_healthy
+    volumes:
+      - type: bind
+        source: ./ops/secrets/c2pa/signer-token
+        target: /var/run/secrets/mediaforge-c2pa-client/signer-token
+        read_only: true
+      - type: bind
+        source: ./ops/secrets/c2pa/verifier-token
+        target: /var/run/secrets/mediaforge-c2pa-client/verifier-token
+        read_only: true
+
+  c2pa-signer:
+    build:
+      context: .
+      dockerfile: Dockerfile.c2pa
+    env_file:
+      - ./ops/staging/.env.staging
+      - ./ops/staging/.env.c2pa
+    environment:
+      MEDIAFORGE_C2PA_ARTIFACT_ROOT: /var/lib/mediaforge/artifacts
+      MEDIAFORGE_C2PA_SIGNER_AUTH_TOKEN_FILE: /var/run/secrets/mediaforge-c2pa/signer-token
+      MEDIAFORGE_C2PA_SIGNER_SERVICE_TIMEOUT_SECONDS: "180"
+    command: ["mediaforge-c2pa-signer", "serve"]
+    volumes:
+      - mediaforge-staging-artifacts:/var/lib/mediaforge
+      - ./ops/secrets/c2pa:/var/run/secrets/mediaforge-c2pa:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8030/healthz', timeout=4).close()"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  c2pa-verifier:
+    build:
+      context: .
+      dockerfile: Dockerfile.c2pa
+    env_file:
+      - ./ops/staging/.env.staging
+      - ./ops/staging/.env.c2pa
+    environment:
+      MEDIAFORGE_C2PA_ARTIFACT_ROOT: /var/lib/mediaforge/artifacts
+      MEDIAFORGE_C2PA_VERIFIER_AUTH_TOKEN_FILE: /var/run/secrets/mediaforge-c2pa/verifier-token
+      MEDIAFORGE_C2PA_VERIFIER_SERVICE_TIMEOUT_SECONDS: "90"
+    command: ["mediaforge-c2pa-verifier", "serve"]
+    volumes:
+      - mediaforge-staging-artifacts:/var/lib/mediaforge:ro
+      - ./ops/secrets/c2pa/verifier-token:/var/run/secrets/mediaforge-c2pa/verifier-token:ro
+      - ./ops/c2pa/trust:/var/run/mediaforge-c2pa-trust:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8031/healthz', timeout=4).close()"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped

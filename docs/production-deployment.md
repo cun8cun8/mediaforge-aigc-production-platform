@@ -572,23 +572,46 @@ MEDIAFORGE_AUDIT_ANCHOR_TIMEOUT_SECONDS=10
 
 工作台可以为本地资产创建内容凭证声明，记录资产 SHA-256、项目来源、参考资产许可证、
 审计链状态和锚定数量。未配置签名器时，声明的 `c2pa.status` 始终是 `UNSIGNED`，只能作为
-待签名证据，不能宣称已嵌入 C2PA 或通过独立验证。配置经过安全评审的本机签名器后，使用
-无 shell 的参数模板调用，并要求它产生 `{output}`：
+待签名证据，不能宣称已嵌入 C2PA 或通过独立验证。每次创建还会生成独立的
+`c2pa_manifest_path`，其内容是 C2PA Tool 可消费的 manifest-definition JSON；应用审计声明
+`{manifest}` 与 C2PA 清单 `{c2pa_manifest}` 不能混用。
+
+生产建议通过隔离的签名器和验证器服务调用。API 进程只持有两个调用令牌，不挂载证书、
+私钥或 HSM/KMS 凭据：
 
 ```text
-MEDIAFORGE_C2PA_SIGNER_COMMAND=c2patool {input} --manifest {manifest} --output {output}
-MEDIAFORGE_C2PA_VERIFIER_COMMAND=c2patool {output} --validate
-MEDIAFORGE_C2PA_SIGNER_TIMEOUT_SECONDS=120
+MEDIAFORGE_C2PA_SIGNER_COMMAND=mediaforge-c2pa-signer-client sign {input} {c2pa_manifest} {output}
+MEDIAFORGE_C2PA_VERIFIER_COMMAND=mediaforge-c2pa-verifier-client verify {input} {c2pa_manifest} {output}
+MEDIAFORGE_C2PA_SIGNER_URL=http://c2pa-signer:8030
+MEDIAFORGE_C2PA_VERIFIER_URL=http://c2pa-verifier:8031
 ```
 
-`{input}` 是原始资产，`{manifest}` 是 MediaForge 的可审计声明，`{output}` 是签名器必须
-创建的输出路径。命令成功且输出存在时状态为 `SIGNED_UNVERIFIED`。配置
+`/content-credentials/status` reports `production_ready: true` only after the
+signer and verifier are configured, test mode is disabled, and an operator has
+set `MEDIAFORGE_C2PA_PRODUCTION_SIGNER_ATTESTED=true` after reviewing a successful
+trusted C2PA validation. Configuration alone is not evidence that the certificate
+chain is accepted by the C2PA trust ecosystem.
+
+The verifier should receive a reviewed, hash-verified trust-anchor PEM via
+`MEDIAFORGE_C2PA_VERIFIER_TRUST_ANCHORS`; `docker-compose.c2pa.yml` mounts it only
+into `c2pa-verifier`. Use `ops/c2pa/install-c2pa-trust-anchors.ps1` to copy a
+reviewed bundle into the ignored runtime location. A self-signed or private-CA
+chain can prove integration only and must not be used to attest production trust.
+
+`{input}` 是原始资产，`{output}` 是签名器必须创建的输出路径。命令成功且输出存在时状态为
+`SIGNED_UNVERIFIED`。配置
 `MEDIAFORGE_C2PA_VERIFIER_COMMAND` 后，工作台或
 `POST /projects/{id}/content-credentials/{credential_id}/verify` 会验证声明哈希、输出哈希并运行
 独立验证器；只有全部通过才标为 `SIGNED_VERIFIED`。未配置签名器的声明可验证本地来源哈希，
 状态为 `INTEGRITY_VERIFIED`，但不代表 C2PA 签名。声明、签名器输出（存在时）、
 `content-credentials.json`、交付包和归档包都会一并保存。签名私钥及 HSM/云 KMS 凭据必须只由
 签名器运行环境持有，不能传给 API 进程。
+
+`docker-compose.c2pa.yml` 和 [`ops/c2pa/README.md`](../ops/c2pa/README.md) 提供了一个
+API、签名器、验证器三进程的可执行配置。开发场景可让签名器读取 PEM；官方 C2PA 文档明确指出
+文件系统私钥仅适合开发/测试，生产应改用 HSM、KMS 或 C2PA Tool 的 subprocess signer。
+在导入 PEM 前，运行 `ops/c2pa/preflight-c2pa-credential.ps1`；它只检查私钥匹配、叶证书的
+非 CA 属性、`digitalSignature` 用途、最短有效期与 C2PA claim-signing EKU，不会打印私钥。
 
 发布验收不可只检查项目中“存在某个”内容凭证。对拟发布项目运行
 `mediaforge-production-acceptance --require-production --release-project {id}` 时，系统要求

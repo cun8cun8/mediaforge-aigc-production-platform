@@ -7777,7 +7777,7 @@ class MediaForgeService:
         for arcname, path in required_reports.items():
             add_source(path, arcname)
         for credential in project.content_credentials:
-            for path_key in ("manifest_path", "signed_output"):
+            for path_key in ("manifest_path", "c2pa_manifest_path", "signed_output"):
                 path_value = credential.get(path_key)
                 if path_value and Path(str(path_value)).is_file():
                     add_source(
@@ -15558,7 +15558,7 @@ class MediaForgeService:
                 continue
             credential = copy.deepcopy(raw_credential)
             credential["project_id"] = target_project_id
-            for path_key in ("manifest_path", "signed_output"):
+            for path_key in ("manifest_path", "c2pa_manifest_path", "signed_output"):
                 source_path = credential.get(path_key)
                 if source_path:
                     candidate = target_output_dir / "content-credentials" / Path(str(source_path)).name

@@ -11,3 +11,7 @@ build
 venv
 tests
 docs
+ops/secrets
+ops/staging/.env.staging
+ops/staging/.env.provider
+ops/staging/.env.c2pa

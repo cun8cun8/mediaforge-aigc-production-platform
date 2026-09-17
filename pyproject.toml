@@ -46,6 +46,10 @@ mediaforge-comfyui-preflight = "mediaforge_p1.comfyui_preflight:main"
 mediaforge-readiness = "mediaforge_p1.readiness:main"
 mediaforge-production-acceptance = "mediaforge_p1.acceptance:main"
 mediaforge-backup = "mediaforge_p1.recovery:main"
+mediaforge-c2pa-signer = "mediaforge_p1.c2pa_signer:signer_main"
+mediaforge-c2pa-signer-client = "mediaforge_p1.c2pa_signer:client_main"
+mediaforge-c2pa-verifier = "mediaforge_p1.c2pa_signer:verifier_main"
+mediaforge-c2pa-verifier-client = "mediaforge_p1.c2pa_signer:verifier_client_main"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

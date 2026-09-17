@@ -82,7 +82,8 @@ manifests and required secret/provider configuration are in [k8s](../k8s/README.
 Prompt versions, human review annotations, experiments, media derivatives, edit
 timelines, Provider contract checks, collaboration presence/soft locks, durable
 CRDT-backed shared production notes, and content credential claims are persisted with
-a project and included in delivery governance files. Content credential claims are
+a project and included in delivery governance files. Each credential includes an
+application audit claim and a C2PA Tool manifest-definition JSON. Content credential claims are
 `UNSIGNED` unless `MEDIAFORGE_C2PA_SIGNER_COMMAND` is configured and its signer
 creates the declared output. A signed credential remains `SIGNED_UNVERIFIED` until
 `MEDIAFORGE_C2PA_VERIFIER_COMMAND` independently validates it; see

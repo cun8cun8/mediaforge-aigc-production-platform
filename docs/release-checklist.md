@@ -48,6 +48,7 @@ This checklist is the deployment decision record for MediaForge. A green CI run 
 - [ ] All source assets required for release have active rights evidence and valid dates.
 - [ ] Delivery package builds, verifies and can be re-imported or independently inspected.
 - [ ] `/content-credentials/status` reports both signer and independent verifier configured; C2PA is only marked verified after a separate verifier command succeeds.
+- [ ] The signer has a current C2PA-trusted certificate chain or an approved HSM/KMS subprocess signer. The API and verifier do not mount the signing private key.
 - [ ] `GET /projects/{id}/content-credentials` reports `summary.final_media.ready=true`: the current `final_mp4` bytes, not only a source or reference asset, have a `SIGNED_VERIFIED` credential.
 
 ## 6. Observability And Operations

@@ -333,7 +333,11 @@ def run_production_acceptance(
     if content_credentials is not None:
         signer_configured = bool(content_credentials.get("configured"))
         verifier_configured = bool(content_credentials.get("verifier_configured"))
-        c2pa_ready = signer_configured and verifier_configured
+        c2pa_ready = (
+            signer_configured
+            and verifier_configured
+            and bool(content_credentials.get("production_ready"))
+        )
         checks.append(
             _check(
                 "content_credentials",
@@ -346,6 +350,9 @@ def run_production_acceptance(
                     "mode": content_credentials.get("mode"),
                     "signer_configured": signer_configured,
                     "verifier_configured": verifier_configured,
+                    "trusted_validation_configured": bool(
+                        content_credentials.get("trusted_validation_configured")
+                    ),
                     "production_ready": bool(content_credentials.get("production_ready")),
                 },
             )

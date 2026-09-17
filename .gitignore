@@ -8,6 +8,10 @@ artifacts/
 ops/secrets/
 ops/staging/.env.staging
 ops/staging/.env.provider
+ops/staging/.env.c2pa
 ops/staging/provider-config/*
 !ops/staging/provider-config/.gitkeep
+ops/c2pa/bin/c2patool
+ops/c2pa/trust/*
+!ops/c2pa/trust/.gitkeep
 backups/
