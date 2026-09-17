@@ -10037,9 +10037,41 @@ class MediaForgeService:
         if not project.shots:
             raise WorkflowError("generate a plan before submitting shots")
 
+        revisions_requested = [
+            shot_id
+            for shot_id, runtime in project.shots.items()
+            if runtime.current_artifact
+            and runtime.review_status == ReviewStatus.CHANGES_REQUESTED
+        ]
+        if revisions_requested and self.stage_locking_required():
+            for shot_id in revisions_requested:
+                self.revise_shot(
+                    project_id,
+                    shot_id,
+                    comment="Batch revision requested.",
+                )
+            self._record_event(
+                project,
+                action="project.batch_revisions_prepared",
+                actor="studio-user",
+                message=(
+                    f"{len(revisions_requested)} shot revision(s) prepared; "
+                    "storyboard and assets must be relocked before generation."
+                ),
+                details={"prepared_for_stage_lock": revisions_requested},
+            )
+            self._persist()
+            return {
+                "project_id": project_id,
+                "submitted": 0,
+                "skipped": [],
+                "prepared_for_stage_lock": revisions_requested,
+                "required_stage_locks": ["storyboard", "assets"],
+                "project": self.project_view(project_id),
+            }
+
         submitted = []
         skipped = []
-        prepared_for_stage_lock = []
         for shot_id, runtime in project.shots.items():
             if runtime.current_artifact and runtime.review_status != ReviewStatus.CHANGES_REQUESTED:
                 skipped.append(shot_id)
@@ -10050,10 +10082,7 @@ class MediaForgeService:
                     shot_id,
                     comment="Batch revision requested.",
                 )
-                if revision.get("requires_stage_lock"):
-                    prepared_for_stage_lock.append(shot_id)
-                else:
-                    submitted.append(revision)
+                submitted.append(revision)
                 continue
             submitted.append(self.submit_shot(project_id, shot_id))
 
@@ -10065,7 +10094,7 @@ class MediaForgeService:
             details={
                 "submitted": len(submitted),
                 "skipped": skipped,
-                "prepared_for_stage_lock": prepared_for_stage_lock,
+                "prepared_for_stage_lock": [],
             },
         )
         self._persist()
@@ -10073,7 +10102,7 @@ class MediaForgeService:
             "project_id": project_id,
             "submitted": len(submitted),
             "skipped": skipped,
-            "prepared_for_stage_lock": prepared_for_stage_lock,
+            "prepared_for_stage_lock": [],
             "project": self.project_view(project_id),
         }
 
@@ -10240,7 +10269,7 @@ class MediaForgeService:
         if self.stage_locking_required():
             response = self.shot_view(runtime)
             response["requires_stage_lock"] = True
-            response["next_stage"] = "assets"
+            response["required_stage_locks"] = ["storyboard", "assets"]
             return response
         return self.submit_shot(project_id, shot_id)
 

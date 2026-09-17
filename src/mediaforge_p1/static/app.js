@@ -5155,7 +5155,7 @@ async function handleShotAction(action, shotId) {
         method: "POST",
         body: JSON.stringify({ comment: $("reviewComment").value.trim() }),
       });
-      logEvent(result.requires_stage_lock ? `${shotId} 返修已准备，请重新锁定资产阶段后生成。` : `${shotId} 返工版本已生成。`);
+      logEvent(result.requires_stage_lock ? `${shotId} 返修已准备，请依次重新锁定分镜和资产阶段后生成。` : `${shotId} 返工版本已生成。`);
     }
     await loadProjectContext(state.projectId);
   } catch (error) {

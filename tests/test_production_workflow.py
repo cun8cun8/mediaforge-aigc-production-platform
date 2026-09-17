@@ -106,9 +106,43 @@ def test_required_stage_locks_prepare_revision_for_relock(tmp_path, monkeypatch)
 
     prepared = service.revise_shot("workflow_revision_lock", shot_id, comment="Rework")
     assert prepared["requires_stage_lock"] is True
+    assert prepared["required_stage_locks"] == ["storyboard", "assets"]
     assert prepared["artifact"] is None
+    assert stage(service.production_workflow("workflow_revision_lock"), "storyboard")["status"] == "REWORK"
     assert stage(service.production_workflow("workflow_revision_lock"), "assets")["status"] == "REWORK"
 
+    service.lock_production_stage("workflow_revision_lock", "storyboard")
     service.lock_production_stage("workflow_revision_lock", "assets")
     regenerated = service.submit_shot("workflow_revision_lock", shot_id)
     assert regenerated["artifact"]
+
+
+def test_required_stage_locks_prepare_all_batch_revisions_before_resubmitting(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("MEDIAFORGE_REQUIRE_STAGE_LOCKS", "true")
+    service = MediaForgeService(tmp_path)
+    service.create_project(brief("workflow_batch_revision_lock"))
+    plan = service.generate_plan("workflow_batch_revision_lock")
+    shot_ids = [item["shot"]["shot_id"] for item in plan["shots"][:2]]
+
+    for stage_key in ("script", "storyboard", "assets"):
+        service.lock_production_stage("workflow_batch_revision_lock", stage_key)
+    for shot_id in shot_ids:
+        service.submit_shot("workflow_batch_revision_lock", shot_id)
+        service.review_shot(
+            "workflow_batch_revision_lock",
+            shot_id,
+            status=ReviewStatus.CHANGES_REQUESTED,
+        )
+
+    prepared = service.submit_pending_shots("workflow_batch_revision_lock")
+    assert prepared["submitted"] == 0
+    assert prepared["prepared_for_stage_lock"] == shot_ids
+    assert prepared["required_stage_locks"] == ["storyboard", "assets"]
+
+    service.lock_production_stage("workflow_batch_revision_lock", "storyboard")
+    service.lock_production_stage("workflow_batch_revision_lock", "assets")
+    resumed = service.submit_pending_shots("workflow_batch_revision_lock")
+    assert resumed["submitted"] == 6
