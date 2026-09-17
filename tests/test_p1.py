@@ -15,6 +15,7 @@ import pytest
 from PIL import Image
 
 from mediaforge_p1.comfyui import ComfyUIProvider, ComfyWorkflowDefinition
+from mediaforge_p1.comfyui_preflight import preflight_comfyui_registry
 from mediaforge_p1.delivery import DeliveryDispatcher
 from mediaforge_p1.enterprise_runtime import (
     BillingLedger,
@@ -871,6 +872,194 @@ def test_comfyui_workflow_registry_selects_pinned_template_and_models(
         {"folder": "checkpoints", "name": "cinematic-v2.safetensors"},
     )
     assert bundle.details["workflow_registry"]["workflow_count"] == 1
+    assert bundle.details["default_template_id"] == "template:cinematic:v2"
+
+
+def test_comfyui_registry_requires_an_explicit_default_when_multiple(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    first_workflow = tmp_path / "first.json"
+    second_workflow = tmp_path / "second.json"
+    first_workflow.write_text(
+        json.dumps({"1": {"class_type": "TestNode", "inputs": {}}}),
+        encoding="utf-8",
+    )
+    second_workflow.write_text(
+        json.dumps({"2": {"class_type": "TestNode", "inputs": {}}}),
+        encoding="utf-8",
+    )
+    registry_path = tmp_path / "registry.json"
+    registry_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "mediaforge-comfyui-workflow-registry-v1",
+                "workflows": [
+                    {
+                        "template_id": "comfyui_image:portrait:v1",
+                        "path": first_workflow.name,
+                        "version": "1",
+                        "sha256": sha256_file(first_workflow),
+                    },
+                    {
+                        "template_id": "comfyui_image:wide:v1",
+                        "path": second_workflow.name,
+                        "version": "1",
+                        "sha256": sha256_file(second_workflow),
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MEDIAFORGE_PROVIDER", "comfyui")
+    monkeypatch.delenv("MEDIAFORGE_PROVIDERS", raising=False)
+    monkeypatch.setenv("COMFYUI_WORKFLOW_REGISTRY_PATH", str(registry_path))
+    monkeypatch.setenv("COMFYUI_REQUIRE_WORKFLOW_PIN", "true")
+    monkeypatch.delenv("MEDIAFORGE_IMAGE_WORKFLOW_TEMPLATE_ID", raising=False)
+
+    missing_default = build_provider_from_env()
+
+    assert missing_default.configured is False
+    assert "MEDIAFORGE_IMAGE_WORKFLOW_TEMPLATE_ID" in missing_default.message
+
+    monkeypatch.setenv(
+        "MEDIAFORGE_IMAGE_WORKFLOW_TEMPLATE_ID",
+        "comfyui_image:wide:v1",
+    )
+    selected = build_provider_from_env()
+
+    assert selected.configured is True
+    assert selected.details["default_template_id"] == "comfyui_image:wide:v1"
+
+
+def test_comfyui_preflight_reports_pinned_registry_without_provider_call(
+    tmp_path: Path,
+) -> None:
+    workflow_path = tmp_path / "reviewed.json"
+    workflow_path.write_text(
+        json.dumps({"1": {"class_type": "TestNode", "inputs": {}}}),
+        encoding="utf-8",
+    )
+    registry_path = tmp_path / "registry.json"
+    registry_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "mediaforge-comfyui-workflow-registry-v1",
+                "workflows": [
+                    {
+                        "template_id": "comfyui_image:reviewed:v1",
+                        "path": workflow_path.name,
+                        "version": "2026.09.17",
+                        "sha256": sha256_file(workflow_path),
+                        "model_requirements": [
+                            {"folder": "checkpoints", "name": "reviewed.safetensors"}
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = preflight_comfyui_registry(registry_path)
+
+    assert report["require_pin"] is True
+    assert report["default_template_id"] == "comfyui_image:reviewed:v1"
+    assert report["workflow_count"] == 1
+    assert report["workflows"] == [
+        {
+            "template_id": "comfyui_image:reviewed:v1",
+            "version": "2026.09.17",
+            "sha256": sha256_file(workflow_path),
+            "source_file": "reviewed.json",
+            "model_requirements": [
+                {"folder": "checkpoints", "name": "reviewed.safetensors"}
+            ],
+        }
+    ]
+
+
+def test_comfyui_registry_rejects_workflow_outside_reviewed_directory(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    reviewed_dir = tmp_path / "reviewed"
+    reviewed_dir.mkdir()
+    external_workflow = tmp_path / "outside.json"
+    external_workflow.write_text(
+        json.dumps({"1": {"class_type": "TestNode", "inputs": {}}}),
+        encoding="utf-8",
+    )
+    registry_path = reviewed_dir / "registry.json"
+    registry_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "mediaforge-comfyui-workflow-registry-v1",
+                "workflows": [
+                    {
+                        "template_id": "comfyui_image:outside:v1",
+                        "path": "../outside.json",
+                        "version": "1",
+                        "sha256": sha256_file(external_workflow),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MEDIAFORGE_PROVIDER", "comfyui")
+    monkeypatch.delenv("MEDIAFORGE_PROVIDERS", raising=False)
+    monkeypatch.setenv("COMFYUI_WORKFLOW_REGISTRY_PATH", str(registry_path))
+
+    bundle = build_provider_from_env()
+
+    assert bundle.configured is False
+    assert "must resolve within the registry directory" in bundle.message
+
+
+def test_comfyui_preflight_requires_a_default_for_multiple_workflows(
+    tmp_path: Path,
+) -> None:
+    first_workflow = tmp_path / "first.json"
+    second_workflow = tmp_path / "second.json"
+    for path in (first_workflow, second_workflow):
+        path.write_text(
+            json.dumps({"1": {"class_type": "TestNode", "inputs": {}}}),
+            encoding="utf-8",
+        )
+    registry_path = tmp_path / "registry.json"
+    registry_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "mediaforge-comfyui-workflow-registry-v1",
+                "workflows": [
+                    {
+                        "template_id": "comfyui_image:first:v1",
+                        "path": first_workflow.name,
+                        "version": "1",
+                        "sha256": sha256_file(first_workflow),
+                    },
+                    {
+                        "template_id": "comfyui_image:second:v1",
+                        "path": second_workflow.name,
+                        "version": "1",
+                        "sha256": sha256_file(second_workflow),
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="MEDIAFORGE_IMAGE_WORKFLOW_TEMPLATE_ID"):
+        preflight_comfyui_registry(registry_path)
+
+    report = preflight_comfyui_registry(
+        registry_path,
+        default_template_id="comfyui_image:second:v1",
+    )
+    assert report["default_template_id"] == "comfyui_image:second:v1"
 
 
 def test_comfyui_workflow_registry_rejects_hash_drift(tmp_path: Path, monkeypatch) -> None:

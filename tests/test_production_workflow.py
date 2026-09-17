@@ -146,3 +146,87 @@ def test_required_stage_locks_prepare_all_batch_revisions_before_resubmitting(
     service.lock_production_stage("workflow_batch_revision_lock", "assets")
     resumed = service.submit_pending_shots("workflow_batch_revision_lock")
     assert resumed["submitted"] == 6
+
+
+def test_reviewed_comfy_template_stays_stable_for_revisions_and_variants(
+    tmp_path,
+):
+    service = MediaForgeService(tmp_path)
+    service.set_provider_status(
+        {
+            "mode": "comfyui",
+            "provider": "comfyui",
+            "configured": True,
+            "message": "ComfyUI workflow is configured.",
+            "capabilities": ["image_generation"],
+            "details": {"default_template_id": "comfyui_image:reviewed:v3"},
+        }
+    )
+    service.create_project(brief("workflow_comfy_template"))
+    plan = service.generate_plan("workflow_comfy_template")
+    shot_id = plan["shots"][0]["shot"]["shot_id"]
+    runtime = service.projects["workflow_comfy_template"].shots[shot_id]
+
+    assert runtime.spec.provider_constraints.capability.value == "image_generation"
+    assert runtime.spec.workflow.template_id == "comfyui_image:reviewed:v3"
+
+    service.submit_shot("workflow_comfy_template", shot_id)
+    service.review_shot(
+        "workflow_comfy_template",
+        shot_id,
+        status=ReviewStatus.CHANGES_REQUESTED,
+    )
+    revised = service.revise_shot("workflow_comfy_template", shot_id)
+    runtime = service.projects["workflow_comfy_template"].shots[shot_id]
+    variant = service._variant_spec(runtime, 1)
+
+    assert revised["revision"] == 1
+    assert runtime.spec.workflow.template_id == "comfyui_image:reviewed:v3"
+    assert runtime.spec.asset_versions["generation_revision"] == "r1"
+    assert variant.workflow.template_id == "comfyui_image:reviewed:v3"
+    assert variant.asset_versions["generation_revision"] == "r1"
+    assert variant.asset_versions["ab_variant"] == "v1"
+
+
+def test_reviewed_comfy_registry_root_is_allowed_but_still_requires_license(
+    tmp_path,
+):
+    service = MediaForgeService(tmp_path)
+    service.set_provider_status(
+        {
+            "mode": "comfyui",
+            "provider": "comfyui",
+            "configured": True,
+            "message": "ComfyUI workflow is configured.",
+            "capabilities": ["image_generation"],
+            "details": {
+                "default_template_id": "studio_cinematic:reviewed:v3",
+                "workflow_registry": {
+                    "workflows": [
+                        {
+                            "registry_template_id": "studio_cinematic:reviewed:v3",
+                        }
+                    ]
+                },
+            },
+        }
+    )
+    service.create_project(brief("workflow_custom_comfy_root"))
+    service.generate_plan("workflow_custom_comfy_root")
+
+    report = service.project_compliance("workflow_custom_comfy_root")
+    checks = {check["name"]: check for check in report["checks"]}
+
+    assert checks["workflow_allowlist"]["passed"] is True
+    assert "studio_cinematic" in checks["workflow_allowlist"]["expected"]
+    assert checks["license_registry"]["passed"] is False
+    assert any(
+        {
+            "kind": "workflow",
+            "identifier": "studio_cinematic",
+            "registered": False,
+            "reason": "not_registered",
+        }.items()
+        <= item.items()
+        for item in checks["license_registry"]["observed"]
+    )

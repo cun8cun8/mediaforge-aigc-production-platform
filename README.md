@@ -134,11 +134,13 @@ $env:MEDIAFORGE_PROVIDERS = "comfyui,replicate"
 $env:COMFYUI_BASE_URL = "http://comfyui.internal:8188"
 $env:COMFYUI_WORKFLOW_REGISTRY_PATH = "D:\secure-config\comfyui-workflow-registry.json"
 $env:COMFYUI_REQUIRE_WORKFLOW_PIN = "true"
+$env:MEDIAFORGE_IMAGE_WORKFLOW_TEMPLATE_ID = "comfyui_image:reviewed:v1"
 $env:REPLICATE_API_TOKEN = "<from-secret-manager>"
 $env:REPLICATE_MODEL_VERSION = "<approved-pinned-model-version>"
 $env:MEDIAFORGE_CALLBACK_SECRET = "<long-random-secret>"
 
-python -m mediaforge_p1.provider_probe --provider comfyui --workflow D:\secure-config\reviewed-comfyui-image-workflow.json
+mediaforge-comfyui-preflight --registry D:\secure-config\comfyui-workflow-registry.json
+python -m mediaforge_p1.provider_probe --provider comfyui --registry D:\secure-config\comfyui-workflow-registry.json --template-id comfyui_image:reviewed:v1 --require-workflow-pin
 python -m mediaforge_p1.provider_probe --provider replicate
 ```
 

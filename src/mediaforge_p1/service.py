@@ -6898,13 +6898,7 @@ class MediaForgeService:
             "configured provider with a named mode",
         )
 
-        allowed_template_roots = {
-            "comfyui_image",
-            "p0_mock_i2v",
-            "p1_mock_i2v",
-            "provider_probe",
-            "replicate_i2v",
-        }
+        allowed_template_roots = self._approved_workflow_template_roots()
         workflow_templates = sorted(
             {
                 runtime.spec.workflow.template_id
@@ -10227,14 +10221,13 @@ class MediaForgeService:
         runtime.revision += 1
         runtime.spec = runtime.spec.model_copy(
             update={
-                "workflow": runtime.spec.workflow.model_copy(
-                    update={
-                        "template_id": (
-                            f"{runtime.spec.workflow.template_id.rsplit(':', 1)[0]}"
-                            f":r{runtime.revision}"
-                        )
-                    }
-                )
+                # The graph identity is an approved provider contract. Revision
+                # identity belongs in the immutable generation input instead of
+                # deriving an unregistered template name.
+                "asset_versions": {
+                    **runtime.spec.asset_versions,
+                    "generation_revision": f"r{runtime.revision}",
+                },
             }
         )
         runtime.current_job_id = None
@@ -14476,7 +14469,6 @@ class MediaForgeService:
                 + strength_offsets[(variant_index - 1) % len(strength_offsets)],
             ),
         )
-        template_root = runtime.spec.workflow.template_id.split(":ab", 1)[0]
         return runtime.spec.model_copy(
             update={
                 "asset_versions": {
@@ -14492,7 +14484,6 @@ class MediaForgeService:
                 ),
                 "workflow": runtime.spec.workflow.model_copy(
                     update={
-                        "template_id": f"{template_root}:ab{variant_index}",
                         "controlnet": runtime.spec.workflow.controlnet.model_copy(
                             update={"strength": round(strength, 2)}
                         ),
@@ -16238,6 +16229,76 @@ class MediaForgeService:
             return Capability.IMAGE_GENERATION
         return Capability.IMAGE_TO_VIDEO
 
+    def _workflow_template_for_capability(self, capability: Capability) -> str:
+        """Return the platform-selected reviewed template for a generation job."""
+        details = self.provider_status.get("details") or {}
+        mode = str(self.provider_status.get("mode") or "").strip().lower()
+        if capability == Capability.IMAGE_GENERATION:
+            selected = str(details.get("default_template_id") or "").strip()
+            if selected:
+                return selected
+            configured = os.getenv("MEDIAFORGE_IMAGE_WORKFLOW_TEMPLATE_ID", "").strip()
+            if configured:
+                return configured
+            if mode == "comfyui":
+                return "comfyui_image:v1"
+            return "p0_mock_i2v:v1"
+        configured = os.getenv("MEDIAFORGE_VIDEO_WORKFLOW_TEMPLATE_ID", "").strip()
+        if configured:
+            return configured
+        if mode == "replicate":
+            return "replicate_i2v:v1"
+        return "p0_mock_i2v:v1"
+
+    def _approved_workflow_template_roots(self) -> set[str]:
+        """Return built-ins plus roots from configured reviewed ComfyUI registries.
+
+        Registry membership proves that an operator reviewed a graph and its pin;
+        it intentionally does not replace the separate license-registry check in
+        ``project_compliance``. A custom root can therefore pass this execution
+        allowlist but still block release until governance records its rights.
+        """
+        roots = {
+            "comfyui_image",
+            "p0_mock_i2v",
+            "p1_mock_i2v",
+            "provider_probe",
+            "replicate_i2v",
+        }
+        statuses = self.provider_statuses or [self.provider_status]
+        for status in statuses:
+            if not bool(status.get("configured")):
+                continue
+            if str(status.get("mode") or "").strip().lower() != "comfyui":
+                continue
+            details = status.get("details")
+            if not isinstance(details, dict):
+                continue
+            template_ids = [details.get("default_template_id")]
+            workflow = details.get("workflow")
+            if isinstance(workflow, dict):
+                template_ids.extend(
+                    [
+                        workflow.get("registry_template_id"),
+                        workflow.get("requested_template_id"),
+                    ]
+                )
+            registry = details.get("workflow_registry")
+            if isinstance(registry, dict):
+                for entry in registry.get("workflows") or []:
+                    if isinstance(entry, dict):
+                        template_ids.extend(
+                            [
+                                entry.get("registry_template_id"),
+                                entry.get("requested_template_id"),
+                            ]
+                        )
+            for template_id in template_ids:
+                root = str(template_id or "").strip().split(":", 1)[0]
+                if root:
+                    roots.add(root)
+        return roots
+
     @staticmethod
     def _stored_reference_assets(records: Any) -> list[dict[str, Any]]:
         normalized: list[dict[str, Any]] = []
@@ -16440,6 +16501,7 @@ class MediaForgeService:
             }
             for character in shot.characters
         ]
+        capability = self._preferred_capability()
         return GenerationSpec(
             project_id=shot.project_id,
             shot_id=shot.shot_id,
@@ -16461,13 +16523,13 @@ class MediaForgeService:
                 mood=shot.mood,
             ),
             provider_constraints=ProviderConstraints(
-                capability=self._preferred_capability(),
+                capability=capability,
                 resolution="720p",
                 max_cost=0.40,
                 deadline_seconds=180,
             ),
             workflow=WorkflowSpec(
-                template_id="p0_mock_i2v:v1",
+                template_id=self._workflow_template_for_capability(capability),
                 allowed_lora_ids=["cinematic_style:v1"],
                 controlnet=ControlNet(enabled=True, strength=0.65),
             ),

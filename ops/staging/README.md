@@ -45,16 +45,24 @@ The base stack intentionally uses `mock`. After assigning a cost owner, collecti
 
 1. Place the workflow registry and referenced workflow JSON files under `ops/staging/provider-config/`.
 2. Copy `.env.provider.comfyui.example` to the ignored `.env.provider` file and set the reachable `COMFYUI_BASE_URL`.
-3. Pin every registry entry with a version and SHA-256; retain its model inventory.
-4. Restart the API and run diagnostics before submitting media:
+3. Pin every registry entry with a version and SHA-256; retain its model inventory. If the registry has more than one graph, set `MEDIAFORGE_IMAGE_WORKFLOW_TEMPLATE_ID` to the exact reviewed `template_id` used for platform-created image jobs.
+4. Validate the mounted registry before restarting. This command only reads JSON and validates SHA-256 pins; it does not contact ComfyUI or submit a media job:
+
+```powershell
+.\ops\staging\verify-comfyui.ps1
+```
+
+5. Restart the API, then run the non-generating connectivity and model-inventory probe:
 
 ```powershell
 Copy-Item ops/staging/.env.provider.comfyui.example ops/staging/.env.provider
 docker compose -f docker-compose.staging.yml up -d --build mediaforge
-Invoke-RestMethod http://127.0.0.1:8021/providers/diagnostics
+.\ops\staging\verify-comfyui.ps1 -Probe
 ```
 
 The Compose stack mounts `provider-config/` read-only at `/app/provider-config`; it never copies reviewed workflows or model files into the image. For a host-local ComfyUI instance on Docker Desktop, `host.docker.internal` is usually appropriate. For a remote GPU host, use its private network address and require network policy/TLS appropriate to that environment.
+
+The probe reads `/system_stats` and each declared `/models/{folder}` inventory endpoint. It requires callback signing to be configured and never sends `POST /prompt`. Run a real `mediaforge-provider-probe` only after cost approval, using the reviewed registry and exact template ID.
 
 ## Verify A Closed Loop
 

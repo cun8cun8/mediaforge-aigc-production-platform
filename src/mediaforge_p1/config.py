@@ -162,7 +162,7 @@ def _workflow_definition(
     )
 
 
-def _load_workflow_registry(
+def load_comfyui_workflow_registry(
     path: Path,
     *,
     require_pin: bool,
@@ -181,6 +181,7 @@ def _load_workflow_registry(
     if not isinstance(entries, list) or not entries:
         raise ValueError("ComfyUI workflow registry must contain a non-empty workflows list")
 
+    registry_root = path.expanduser().resolve().parent
     definitions: dict[str, ComfyWorkflowDefinition] = {}
     for index, entry in enumerate(entries):
         if not isinstance(entry, dict):
@@ -192,8 +193,16 @@ def _load_workflow_registry(
         workflow_path = Path(raw_path).expanduser()
         if not workflow_path.is_absolute():
             workflow_path = path.parent / workflow_path
+        resolved_workflow_path = workflow_path.resolve()
+        try:
+            resolved_workflow_path.relative_to(registry_root)
+        except ValueError as exc:
+            raise ValueError(
+                "ComfyUI workflow registry entries must resolve within the registry directory: "
+                f"{raw_path}"
+            ) from exc
         definition = _workflow_definition(
-            workflow_path,
+            resolved_workflow_path,
             template_id=template_id,
             version=str(entry.get("version") or "").strip() or None,
             pinned_sha256=str(entry.get("sha256") or "").strip() or None,
@@ -204,6 +213,46 @@ def _load_workflow_registry(
             raise ValueError(f"ComfyUI workflow registry repeats template_id: {definition.template_id}")
         definitions[definition.template_id] = definition
     return definitions
+
+
+def select_comfyui_image_template(
+    workflows: dict[str, ComfyWorkflowDefinition],
+    default_workflow: ComfyWorkflowDefinition | None,
+    *,
+    default_template_id: str | None = None,
+) -> str:
+    """Choose the reviewed graph used by platform-created image jobs.
+
+    A registry can hold several reviewed graphs, but the normal production
+    workflow does not let an Agent choose arbitrary graph names. Requiring an
+    explicit default therefore prevents a healthy-looking ComfyUI deployment
+    from failing only after a cost-bearing job reaches the Provider.
+    """
+    configured = (
+        default_template_id
+        if default_template_id is not None
+        else os.getenv("MEDIAFORGE_IMAGE_WORKFLOW_TEMPLATE_ID", "")
+    ).strip()
+    if workflows:
+        if configured:
+            if configured not in workflows:
+                available = ", ".join(sorted(workflows))
+                raise ValueError(
+                    "MEDIAFORGE_IMAGE_WORKFLOW_TEMPLATE_ID is not registered: "
+                    f"{configured!r}; available: {available}"
+                )
+            return configured
+        if len(workflows) == 1:
+            return next(iter(workflows))
+        available = ", ".join(sorted(workflows))
+        raise ValueError(
+            "multiple ComfyUI workflows are registered; set "
+            "MEDIAFORGE_IMAGE_WORKFLOW_TEMPLATE_ID to one of: "
+            f"{available}"
+        )
+    if default_workflow is None:  # pragma: no cover - defensive invariant
+        raise ValueError("ComfyUI default workflow is not configured")
+    return default_workflow.template_id
 
 
 def _env_float(
@@ -291,9 +340,10 @@ def _build_provider_for_mode(mode: str) -> ProviderBundle:
             require_pin = _env_bool("COMFYUI_REQUIRE_WORKFLOW_PIN", False)
             details["workflow_pin_required"] = require_pin
             workflows: dict[str, ComfyWorkflowDefinition] = {}
+            workflow: ComfyWorkflowDefinition | None = None
             if registry_raw:
                 registry_path = Path(registry_raw).expanduser()
-                workflows = _load_workflow_registry(
+                workflows = load_comfyui_workflow_registry(
                     registry_path,
                     require_pin=require_pin,
                 )
@@ -320,6 +370,10 @@ def _build_provider_for_mode(mode: str) -> ProviderBundle:
                 details["workflow"] = workflow.provenance_view(
                     requested_template_id=workflow.template_id
                 )
+            details["default_template_id"] = select_comfyui_image_template(
+                workflows,
+                workflow,
+            )
             timeout_seconds = _env_float(
                 "COMFYUI_TIMEOUT_SECONDS",
                 60.0,

@@ -374,9 +374,13 @@ JSON graph. `COMFYUI_TIMEOUT_SECONDS`, `COMFYUI_POLL_INTERVAL_SECONDS`, and
 template pool, use `COMFYUI_WORKFLOW_REGISTRY_PATH` and set
 `COMFYUI_REQUIRE_WORKFLOW_PIN=true`; every registry entry then needs a version
 and an expected SHA-256. MediaForge validates the graph bytes during startup,
-routes by the shot `template_id`, and includes the selected graph identity and
+requires `MEDIAFORGE_IMAGE_WORKFLOW_TEMPLATE_ID` when a registry has more than
+one image graph, routes platform-created shots to that reviewed `template_id`, and includes the selected graph identity and
 ComfyUI queue/execution timeline in each artifact sidecar. See
 `docs/comfyui-provider.md` for the registry format.
+
+Use `mediaforge-comfyui-preflight --registry <path>` to validate pinned
+registry contents without opening a network connection or submitting media.
 
 When using `replicate`, set `REPLICATE_API_TOKEN` and the pinned
 `REPLICATE_MODEL_VERSION`. `REPLICATE_API_BASE_URL` is optional. The HTTP

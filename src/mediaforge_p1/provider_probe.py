@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .comfyui import ComfyUIProvider
+from .config import load_comfyui_workflow_registry
 from .contracts import (
     Capability,
     GenerationSpec,
@@ -26,7 +27,13 @@ from .replicate import ReplicateVideoProvider
 from .router import ProviderRegistration, ProviderRouter
 
 
-def build_probe_spec(provider_name: str, duration_seconds: int, capability: Capability | None = None) -> GenerationSpec:
+def build_probe_spec(
+    provider_name: str,
+    duration_seconds: int,
+    capability: Capability | None = None,
+    *,
+    template_id: str | None = None,
+) -> GenerationSpec:
     capability = capability or (
         Capability.IMAGE_GENERATION
         if provider_name == "comfyui"
@@ -49,7 +56,7 @@ def build_probe_spec(provider_name: str, duration_seconds: int, capability: Capa
             deadline_seconds=int(os.getenv("MEDIAFORGE_DEADLINE_SECONDS", "180")),
         ),
         workflow=WorkflowSpec(
-            template_id="provider_probe:v1",
+            template_id=template_id or "provider_probe:v1",
             allowed_lora_ids=[],
             controlnet=ControlNet(enabled=False, strength=0),
         ),
@@ -72,10 +79,26 @@ def load_workflow(path: Path) -> dict[str, Any]:
     return value
 
 
-def build_provider(provider_name: str, workflow_path: Path | None) -> GenerationProvider:
+def build_provider(
+    provider_name: str,
+    workflow_path: Path | None,
+    *,
+    registry_path: Path | None = None,
+    require_workflow_pin: bool = False,
+) -> GenerationProvider:
     if provider_name == "comfyui":
+        if registry_path is not None:
+            workflows = load_comfyui_workflow_registry(
+                registry_path,
+                require_pin=require_workflow_pin,
+            )
+            return ComfyUIProvider(
+                base_url=os.getenv("COMFYUI_BASE_URL", "http://127.0.0.1:8188"),
+                workflow={},
+                workflows=workflows,
+            )
         if workflow_path is None:
-            raise ValueError("--workflow is required for --provider comfyui")
+            raise ValueError("--workflow or --registry is required for --provider comfyui")
         return ComfyUIProvider(
             base_url=os.getenv("COMFYUI_BASE_URL", "http://127.0.0.1:8188"),
             workflow=load_workflow(workflow_path),
@@ -124,14 +147,27 @@ def run_provider_probe(
     output_dir: Path,
     *,
     workflow_path: Path | None = None,
+    registry_path: Path | None = None,
     duration_seconds: int = 3,
     capability: Capability | None = None,
+    template_id: str | None = None,
+    require_workflow_pin: bool = False,
 ) -> dict[str, Any]:
-    provider = build_provider(provider_name, workflow_path)
+    provider = build_provider(
+        provider_name,
+        workflow_path,
+        registry_path=registry_path,
+        require_workflow_pin=require_workflow_pin,
+    )
     if capability is None and provider_name == "local":
         raw = os.getenv("MEDIAFORGE_LOCAL_PROVIDER_CAPABILITIES", "image_generation,image_to_video").split(",")
         capability = Capability(raw[0].strip())
-    spec = build_probe_spec(provider_name, duration_seconds, capability)
+    spec = build_probe_spec(
+        provider_name,
+        duration_seconds,
+        capability,
+        template_id=template_id,
+    )
     router = ProviderRouter([ProviderRegistration(provider=provider, priority=1)])
     decision = router.select(spec)
     store = JobStore()
@@ -211,7 +247,15 @@ def main() -> int:
         choices=("comfyui", "replicate", "local"),
         required=True,
     )
-    parser.add_argument("--workflow", type=Path)
+    workflow_source = parser.add_mutually_exclusive_group()
+    workflow_source.add_argument("--workflow", type=Path)
+    workflow_source.add_argument("--registry", type=Path)
+    parser.add_argument("--template-id")
+    parser.add_argument(
+        "--require-workflow-pin",
+        action="store_true",
+        help="Require version and SHA-256 pins for every registry workflow.",
+    )
     parser.add_argument("--duration", type=int, default=3)
     parser.add_argument("--capability", choices=[item.value for item in Capability])
     parser.add_argument(
@@ -221,12 +265,19 @@ def main() -> int:
     )
     args = parser.parse_args()
     try:
+        if args.provider != "comfyui" and (args.workflow or args.registry or args.template_id):
+            raise ValueError("--workflow, --registry and --template-id are only supported for --provider comfyui")
+        if args.registry is not None and not args.template_id:
+            raise ValueError("--template-id is required when probing a ComfyUI registry")
         result = run_provider_probe(
             args.provider,
             args.output,
             workflow_path=args.workflow,
+            registry_path=args.registry,
             duration_seconds=args.duration,
             capability=Capability(args.capability) if args.capability else None,
+            template_id=args.template_id,
+            require_workflow_pin=args.require_workflow_pin,
         )
     except (ValueError, RuntimeError) as exc:
         parser.error(str(exc))

@@ -38,11 +38,12 @@ $env:MEDIAFORGE_PROVIDER = "comfyui"
 $env:COMFYUI_BASE_URL = "http://comfyui.internal:8188"
 $env:COMFYUI_WORKFLOW_REGISTRY_PATH = "/app/config/comfyui-workflow-registry.json"
 $env:COMFYUI_REQUIRE_WORKFLOW_PIN = "true"
+$env:MEDIAFORGE_IMAGE_WORKFLOW_TEMPLATE_ID = "comfyui_image:reviewed:v1"
 $env:COMFYUI_TIMEOUT_SECONDS = "180"
 $env:COMFYUI_POLL_INTERVAL_SECONDS = "0.5"
 ```
 
-The registry must map each `template_id` to a reviewed API-format workflow, version and SHA-256. Startup validates the workflow bytes; health checks also inspect the ComfyUI service and declared model inventory. See [ComfyUI Provider Adapter](comfyui-provider.md).
+The registry must map each `template_id` to a reviewed API-format workflow, version and SHA-256. A single-entry registry is selected automatically; a multi-workflow registry must set `MEDIAFORGE_IMAGE_WORKFLOW_TEMPLATE_ID` to an exact reviewed ID. Startup validates the workflow bytes; health checks also inspect the ComfyUI service and declared model inventory. See [ComfyUI Provider Adapter](comfyui-provider.md).
 
 ### Replicate Image-To-Video
 

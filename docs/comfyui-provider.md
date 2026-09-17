@@ -55,7 +55,37 @@ Relative workflow paths resolve from the registry directory. Each `template_id`
 must be unique. With `COMFYUI_REQUIRE_WORKFLOW_PIN=true`, a non-empty version
 and matching SHA-256 are mandatory. Model availability is a folder/name check
 against ComfyUI, not a cryptographic verification of weight bytes; keep the
-model inventory and image digest in deployment configuration as well.
+model inventory and image digest in deployment configuration as well. Workflow
+files must resolve inside the registry directory; parent-directory traversal,
+absolute paths outside that directory and symlink escapes are rejected.
+
+For platform-created image jobs, the registry must resolve one reviewed default
+template. A single-entry registry is selected automatically. For more than one
+entry, set `MEDIAFORGE_IMAGE_WORKFLOW_TEMPLATE_ID` to an exact registry
+`template_id`; startup rejects an omitted or unknown value instead of waiting
+for a billable job to fail at the Provider. Shot revisions and A/B candidates
+retain that approved graph identity and record `generation_revision` or
+`ab_variant` in the immutable generation spec.
+
+Registry membership is an execution approval, not a rights grant. A configured
+reviewed template root is allowed through the workflow gate, but a release
+still requires a matching `workflow` entry in the MediaForge license registry.
+For example, the sample `template:cinematic:v2` requires an approved
+`{"kind":"workflow","identifier":"template",...}` record before release.
+Use the built-in `comfyui_image:*` namespace when that standard governance
+record is appropriate, or import a reviewed license-registry record for a
+custom namespace.
+
+Validate a registry locally before any network call:
+
+```powershell
+mediaforge-comfyui-preflight --registry D:\secure-config\comfyui-workflow-registry.json
+```
+
+The preflight validates the JSON graph structure, unique template names,
+workflow SHA-256 pins, versions and declared model requirement format. It does
+not contact ComfyUI or submit a prompt. Use `--allow-unpinned` only for a local
+development experiment.
 
 ## Workflow template
 
@@ -125,3 +155,22 @@ that image capability, validate the result with the shared media quality gate,
 and normalize image artifacts into the final MP4 export. The video path still
 remains handled by the Mock or Replicate Provider until a reviewed ComfyUI
 video workflow is added.
+
+## Approved cost-bearing probe
+
+After the non-generating preflight and health diagnostics pass, an operator can
+submit one explicitly approved test through the same registry used by staging:
+
+```powershell
+mediaforge-provider-probe `
+  --provider comfyui `
+  --registry D:\secure-config\comfyui-workflow-registry.json `
+  --template-id comfyui_image:reviewed:v1 `
+  --require-workflow-pin `
+  --output artifacts/provider-probe
+```
+
+This command sends `POST /prompt` and can consume GPU capacity. Its manifest
+records the selected workflow version, SHA-256, output artifact and quality
+gate result. Do not run it from CI or before a cost owner has approved the
+workflow and model inventory.
