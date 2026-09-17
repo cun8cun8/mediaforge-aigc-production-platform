@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 from pathlib import Path
 
@@ -226,6 +227,92 @@ def test_collaboration_locks_provider_contracts_and_credentials_are_durable(tmp_
     assert restored.project_content_credentials("collaboration_foundations")["summary"]["count"] == 1
 
 
+def test_release_credential_summary_requires_current_final_media_bytes(tmp_path: Path) -> None:
+    service = MediaForgeService(tmp_path)
+    service.create_project(brief("release_credential_binding"))
+    project = service._project("release_credential_binding")
+    final_path = tmp_path / "release_credential_binding" / "final_sample.mp4"
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    final_path.write_bytes(b"first final media bytes")
+    initial_hash = hashlib.sha256(final_path.read_bytes()).hexdigest()
+    project.final_mp4 = str(final_path)
+    project.content_credentials = [
+        {
+            "credential_id": "credential_reference",
+            "claim": {"asset_id": "reference-image"},
+            "asset": {"sha256": "reference-hash"},
+            "c2pa": {"status": "SIGNED_VERIFIED"},
+            "verification": {"status": "SIGNED_VERIFIED"},
+        },
+        {
+            "credential_id": "credential_final",
+            "claim": {"asset_id": "final_mp4"},
+            "asset": {"sha256": initial_hash},
+            "c2pa": {"status": "SIGNED_VERIFIED"},
+            "verification": {"status": "SIGNED_VERIFIED"},
+        },
+    ]
+
+    summary = service.project_content_credentials(
+        "release_credential_binding"
+    )["summary"]["final_media"]
+    assert summary == {
+        "asset_id": "final_mp4",
+        "available": True,
+        "credential_count": 1,
+        "signed_verified_count": 1,
+        "current_signed_verified_count": 1,
+        "ready": True,
+    }
+
+    final_path.write_bytes(b"re-exported final media bytes")
+    reexported_summary = service.project_content_credentials(
+        "release_credential_binding"
+    )["summary"]["final_media"]
+    assert reexported_summary["signed_verified_count"] == 1
+    assert reexported_summary["current_signed_verified_count"] == 0
+    assert reexported_summary["ready"] is False
+
+
+def test_independent_c2pa_verification_promotes_final_media_credential(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    service = MediaForgeService(tmp_path)
+    service.create_project(brief("c2pa_verification_promotion"))
+    project = service._project("c2pa_verification_promotion")
+    final_path = tmp_path / "c2pa_verification_promotion" / "final_sample.mp4"
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    final_path.write_bytes(b"final media subject to independent verification")
+    final_hash = hashlib.sha256(final_path.read_bytes()).hexdigest()
+    project.final_mp4 = str(final_path)
+    project.content_credentials = [
+        {
+            "credential_id": "credential_final_pending_verification",
+            "claim": {"asset_id": "final_mp4"},
+            "asset": {"sha256": final_hash},
+            "asset_path": str(final_path),
+            "c2pa": {"status": "SIGNED_UNVERIFIED"},
+            "verification": {"status": "NOT_VERIFIED", "passed": False},
+        }
+    ]
+    monkeypatch.setattr(
+        service.content_credentials,
+        "verify",
+        lambda _credential: {"status": "SIGNED_VERIFIED", "passed": True},
+    )
+
+    verified = service.verify_content_credential(
+        "c2pa_verification_promotion",
+        "credential_final_pending_verification",
+    )["credential"]
+    assert verified["c2pa"]["status"] == "SIGNED_VERIFIED"
+    assert verified["c2pa"]["verification"] == "independent-verifier-passed"
+    assert service.project_content_credentials(
+        "c2pa_verification_promotion"
+    )["summary"]["final_media"]["ready"] is True
+
+
 def test_collaboration_contract_and_credential_api_routes(tmp_path: Path) -> None:
     with TestClient(create_app(output_root=tmp_path)) as client:
         payload = brief("api_foundations").model_dump(mode="json")
@@ -430,3 +517,45 @@ def test_evaluation_baseline_detects_prompt_or_provider_context_drift(tmp_path: 
     service.release_project(project_id)
     with pytest.raises(ValueError, match="released project evaluation baseline cannot be changed"):
         service.create_evaluation_baseline(project_id, name="Post-release mutation")
+
+
+def test_required_release_content_credentials_gate_current_final_media(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("MEDIAFORGE_REQUIRE_RELEASE_CONTENT_CREDENTIALS", "true")
+    service = MediaForgeService(tmp_path)
+    project_id = "release_credential_gate"
+    service.create_project(brief(project_id))
+    service.generate_plan(project_id)
+    service.submit_pending_shots(project_id)
+    service.approve_ready_shots(project_id, actor="quality-owner")
+    service.export_project(project_id)
+    service.build_delivery_package(project_id)
+
+    delivery_stage = next(
+        stage
+        for stage in service.production_workflow(project_id)["stages"]
+        if stage["key"] == "delivery"
+    )
+    credential_gate = next(
+        gate for gate in delivery_stage["gates"]
+        if gate["code"] == "final_media_content_credential"
+    )
+    assert credential_gate["passed"] is False
+    with pytest.raises(ValueError, match="current final MP4 requires"):
+        service.release_project(project_id)
+
+    project = service._project(project_id)
+    final_hash = hashlib.sha256(Path(project.final_mp4).read_bytes()).hexdigest()
+    project.content_credentials = [
+        {
+            "credential_id": "credential_current_final",
+            "claim": {"asset_id": "final_mp4"},
+            "asset": {"sha256": final_hash},
+            "c2pa": {"status": "SIGNED_VERIFIED"},
+            "verification": {"status": "SIGNED_VERIFIED"},
+        }
+    ]
+    release = service.release_project(project_id)
+    assert release["release"]["status"] == "RELEASED"

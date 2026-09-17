@@ -590,6 +590,15 @@ MEDIAFORGE_C2PA_SIGNER_TIMEOUT_SECONDS=120
 `content-credentials.json`、交付包和归档包都会一并保存。签名私钥及 HSM/云 KMS 凭据必须只由
 签名器运行环境持有，不能传给 API 进程。
 
+发布验收不可只检查项目中“存在某个”内容凭证。对拟发布项目运行
+`mediaforge-production-acceptance --require-production --release-project {id}` 时，系统要求
+`GET /projects/{id}/content-credentials` 的 `summary.final_media.ready` 为 `true`：
+`claim.asset_id=final_mp4` 的凭证必须同时是 `SIGNED_VERIFIED`，且凭证中记录的 SHA-256
+与当前 `final_mp4` 文件一致。重新导出或替换成片会改变哈希，旧凭证会自动失去发布资格，
+需要重新签名并交给独立验证器验证。生产部署还应设置
+`MEDIAFORGE_REQUIRE_RELEASE_CONTENT_CREDENTIALS=true`，以使工作台的发布 API 强制执行
+同一门禁，而不是只在外部验收阶段报告失败。
+
 `GET /providers/contracts` 执行不产生生成任务的 Provider 协议检查；
 `POST /projects/{id}/providers/contracts/validate` 还会验证当前镜头是否能由已启用服务商在
 预算范围内路由。该检查不代表目标模型的质量、价格和法律合规验收，生产切换仍应在隔离

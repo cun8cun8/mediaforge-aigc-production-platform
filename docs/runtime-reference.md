@@ -92,7 +92,9 @@ creates the declared output. A signed credential remains `SIGNED_UNVERIFIED` unt
 锁定会保存对应证据指纹；剧本、分镜、参考资产、视频或后期输入变更会使受影响阶段及其下游
 锁定失效，并将返工范围写入审计日志。默认是建议门禁，便于渐进迁移；生产环境可设置
 `MEDIAFORGE_REQUIRE_STAGE_LOCKS=true`，要求在提交镜头、导出成片、构建交付包和发布前完成
-对应阶段锁定。
+对应阶段锁定。配置 `MEDIAFORGE_REQUIRE_RELEASE_CONTENT_CREDENTIALS=true` 后，发布 API
+还必须确认当前 `final_mp4` 本身具有已签名并由独立验证器验证的 C2PA 内容凭证；参考图或
+历史成片的凭证不能替代该门禁。
 
 许可证台账可按资产 SHA-256 保存合同证据与有效期，并在
 `MEDIAFORGE_REQUIRE_ASSET_RIGHTS_RECORD=true` 时把到期或缺失的资产权利记录变成发布

@@ -27,7 +27,9 @@ $env:MEDIAFORGE_ARTIFACT_ROOT = "artifacts/local"
 python -m uvicorn mediaforge_p1.api:create_app --factory --host 127.0.0.1 --port 8020
 ```
 
-Do not enable `MEDIAFORGE_REQUIRE_STAGE_LOCKS` on the first local walkthrough. Enable it when the team is ready to test the full review process.
+Do not enable `MEDIAFORGE_REQUIRE_STAGE_LOCKS` or
+`MEDIAFORGE_REQUIRE_RELEASE_CONTENT_CREDENTIALS` on the first local walkthrough.
+Enable the latter only after a C2PA signer and independent verifier are configured.
 
 ## Provider Profiles
 
@@ -158,6 +160,7 @@ MEDIAFORGE_CONTROL_PLANE_LEASE_SECONDS=30
 
 MEDIAFORGE_AUTH_MODE=oidc
 MEDIAFORGE_REQUIRE_STAGE_LOCKS=true
+MEDIAFORGE_REQUIRE_RELEASE_CONTENT_CREDENTIALS=true
 MEDIAFORGE_RATE_LIMIT_ENABLED=true
 ```
 

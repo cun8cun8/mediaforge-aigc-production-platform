@@ -3856,6 +3856,7 @@ function renderAssets() {
   const references = inventory.reference_assets || [];
   const outputs = inventory.outputs || [];
   const credentials = project.content_credentials?.credentials || [];
+  const finalMediaCredential = project.content_credentials?.summary?.final_media || {};
   const credentialsByAsset = new Map(credentials.map((credential) => [credential.claim?.asset_id, credential]));
   const totalAssets = (summary.reference_assets || 0) + (summary.generated_assets || 0) + (summary.outputs || 0);
   $("assetCount").textContent = `${totalAssets} 个资产`;
@@ -3863,6 +3864,16 @@ function renderAssets() {
   $("assetGenerated").textContent = formatKindBreakdown(summary.generated_by_kind, summary.generated_assets || 0);
   $("assetCurrent").textContent = formatKindBreakdown(summary.current_by_kind, summary.current_media_assets || summary.current_video_assets || 0);
   $("assetOutputs").textContent = String(summary.outputs || 0);
+  const finalCredentialStatus = $("finalMediaCredentialStatus");
+  const finalCredentialReady = Boolean(finalMediaCredential.ready);
+  const finalMediaAvailable = Boolean(finalMediaCredential.available);
+  finalCredentialStatus.classList.toggle("is-ready", finalCredentialReady);
+  finalCredentialStatus.classList.toggle("is-blocked", finalMediaAvailable && !finalCredentialReady);
+  finalCredentialStatus.textContent = !finalMediaAvailable
+    ? "最终成片凭证：等待导出成片"
+    : finalCredentialReady
+      ? "最终成片凭证：C2PA 已签名并独立验证"
+      : "最终成片凭证：需要为当前成片创建并验证 C2PA 凭证";
   const hasProject = Boolean(state.projectId && state.project);
   const archived = Boolean(state.project?.archived);
   const kind = $("referenceKind");

@@ -75,6 +75,13 @@ def _check(code: str, passed: bool, blocking: bool, message: str, detail: dict[s
     }
 
 
+def _nonnegative_int(value: Any, *, default: int = 0) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return default
+
+
 def run_production_acceptance(
     base_url: str,
     *,
@@ -364,7 +371,10 @@ def run_production_acceptance(
                 project_rows.append(
                     {
                         "credential_count": 0,
-                        "signed_verified_count": 0,
+                        "final_media_credential_count": 0,
+                        "final_media_signed_verified_count": 0,
+                        "current_final_media_signed_verified_count": 0,
+                        "final_media_available": False,
                         "passed": False,
                     }
                 )
@@ -372,20 +382,28 @@ def run_production_acceptance(
             credentials = payload.get("credentials") or []
             if not isinstance(credentials, list):
                 credentials = []
-            signed_verified_count = sum(
-                1
-                for credential in credentials
-                if isinstance(credential, dict)
-                and str((credential.get("c2pa") or {}).get("status") or "")
-                == "SIGNED_VERIFIED"
-                and str((credential.get("verification") or {}).get("status") or "")
-                == "SIGNED_VERIFIED"
+            summary = payload.get("summary")
+            summary = summary if isinstance(summary, dict) else {}
+            final_media = summary.get("final_media")
+            final_media = final_media if isinstance(final_media, dict) else {}
+            final_media_available = bool(final_media.get("available"))
+            current_signed_verified_count = _nonnegative_int(
+                final_media.get("current_signed_verified_count")
             )
             project_rows.append(
                 {
-                    "credential_count": len(credentials),
-                    "signed_verified_count": signed_verified_count,
-                    "passed": signed_verified_count > 0,
+                    "credential_count": _nonnegative_int(
+                        summary.get("count"), default=len(credentials)
+                    ),
+                    "final_media_credential_count": _nonnegative_int(
+                        final_media.get("credential_count")
+                    ),
+                    "final_media_signed_verified_count": _nonnegative_int(
+                        final_media.get("signed_verified_count")
+                    ),
+                    "current_final_media_signed_verified_count": current_signed_verified_count,
+                    "final_media_available": final_media_available,
+                    "passed": final_media_available and current_signed_verified_count > 0,
                 }
             )
         release_credentials_passed = all(
@@ -396,18 +414,27 @@ def run_production_acceptance(
                 "release_content_credentials",
                 release_credentials_passed,
                 require_production,
-                "Every release project has independently verified C2PA content credentials."
+                "Every release project has an independently verified C2PA credential for its current final MP4."
                 if release_credentials_passed
-                else "At least one release project has no independently verified C2PA content credential.",
+                else "At least one release project has no current final MP4 with an independently verified C2PA credential.",
                 {
                     "release_project_count": len(project_rows),
                     "credential_count": sum(
                         int(item["credential_count"]) for item in project_rows
                     ),
-                    "signed_verified_count": sum(
-                        int(item["signed_verified_count"]) for item in project_rows
+                    "final_media_credential_count": sum(
+                        int(item["final_media_credential_count"])
+                        for item in project_rows
                     ),
-                    "projects_with_signed_verified_credentials": sum(
+                    "final_media_signed_verified_count": sum(
+                        int(item["final_media_signed_verified_count"])
+                        for item in project_rows
+                    ),
+                    "current_final_media_signed_verified_count": sum(
+                        int(item["current_final_media_signed_verified_count"])
+                        for item in project_rows
+                    ),
+                    "projects_with_current_final_media_credentials": sum(
                         1 for item in project_rows if item["passed"]
                     ),
                 },
@@ -598,7 +625,7 @@ def main() -> int:
             if item.strip()
         ],
         metavar="PROJECT_ID",
-        help="release project requiring at least one independently verified C2PA credential; repeat as needed",
+        help="release project requiring a current final MP4 with an independently verified C2PA credential; repeat as needed",
     )
     parser.add_argument(
         "--provider-probe-receipt",

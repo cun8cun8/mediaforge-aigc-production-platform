@@ -456,7 +456,16 @@ def test_release_project_acceptance_requires_signed_verified_c2pa_evidence(monke
                     "c2pa": {"status": "SIGNED_UNVERIFIED"},
                     "verification": {"status": "SIGNED_UNVERIFIED"},
                 }
-            ]
+            ],
+            "summary": {
+                "count": 1,
+                "final_media": {
+                    "available": True,
+                    "credential_count": 1,
+                    "signed_verified_count": 0,
+                    "current_signed_verified_count": 0,
+                },
+            },
         },
         "/source-ingest/status": {"configuration_error": None},
         "/planning/status": {},
@@ -490,7 +499,16 @@ def test_release_project_acceptance_requires_signed_verified_c2pa_evidence(monke
                 "c2pa": {"status": "SIGNED_VERIFIED"},
                 "verification": {"status": "SIGNED_VERIFIED"},
             }
-        ]
+        ],
+        "summary": {
+            "count": 1,
+            "final_media": {
+                "available": True,
+                "credential_count": 1,
+                "signed_verified_count": 1,
+                "current_signed_verified_count": 1,
+            },
+        },
     }
     verified = acceptance.run_production_acceptance(
         "https://staging.example.com",
@@ -506,6 +524,8 @@ def test_release_project_acceptance_requires_signed_verified_c2pa_evidence(monke
     assert evidence["detail"] == {
         "release_project_count": 1,
         "credential_count": 1,
-        "signed_verified_count": 1,
-        "projects_with_signed_verified_credentials": 1,
+        "final_media_credential_count": 1,
+        "final_media_signed_verified_count": 1,
+        "current_final_media_signed_verified_count": 1,
+        "projects_with_current_final_media_credentials": 1,
     }

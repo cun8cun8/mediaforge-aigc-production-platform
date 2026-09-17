@@ -10919,8 +10919,47 @@ class MediaForgeService:
             verification_counts[verification_status] = (
                 verification_counts.get(verification_status, 0) + 1
             )
+
+        # A release credential must prove the exact bytes of the current final
+        # delivery, not merely one of the project's source or generated assets.
+        # Re-exporting the project changes this hash and makes prior final-media
+        # credentials ineligible until the new output is signed and verified.
+        final_output = next(
+            (
+                output
+                for output in self.asset_inventory(project_id)["outputs"]
+                if output.get("kind") == "final_mp4"
+            ),
+            None,
+        )
+        final_sha256 = str((final_output or {}).get("sha256") or "")
+        final_available = bool(
+            final_output
+            and final_output.get("exists")
+            and final_sha256
+        )
+        final_credentials = [
+            credential
+            for credential in credentials
+            if str((credential.get("claim") or {}).get("asset_id") or "")
+            == "final_mp4"
+        ]
+        signed_verified_final_credentials = [
+            credential
+            for credential in final_credentials
+            if (credential.get("c2pa") or {}).get("status") == "SIGNED_VERIFIED"
+            and (credential.get("verification") or {}).get("status")
+            == "SIGNED_VERIFIED"
+        ]
+        current_signed_verified_final_credentials = [
+            credential
+            for credential in signed_verified_final_credentials
+            if final_available
+            and str((credential.get("asset") or {}).get("sha256") or "")
+            == final_sha256
+        ]
         return {
-            "schema_version": "mediaforge-project-content-credentials-v1",
+            "schema_version": "mediaforge-project-content-credentials-v2",
             "project_id": project_id,
             "adapter": self.content_credentials_status(),
             "credentials": credentials,
@@ -10933,6 +10972,16 @@ class MediaForgeService:
                     for credential in credentials
                     if (credential.get("c2pa") or {}).get("status") == "SIGNED_UNVERIFIED"
                 ),
+                "final_media": {
+                    "asset_id": "final_mp4",
+                    "available": final_available,
+                    "credential_count": len(final_credentials),
+                    "signed_verified_count": len(signed_verified_final_credentials),
+                    "current_signed_verified_count": len(
+                        current_signed_verified_final_credentials
+                    ),
+                    "ready": bool(current_signed_verified_final_credentials),
+                },
             },
         }
 
@@ -11038,6 +11087,17 @@ class MediaForgeService:
         except ContentCredentialError as exc:
             raise WorkflowError(str(exc)) from exc
         credential["verification"] = verification
+        if str(verification.get("status") or "").startswith("SIGNED"):
+            c2pa = credential.get("c2pa")
+            if not isinstance(c2pa, dict):
+                c2pa = {}
+                credential["c2pa"] = c2pa
+            c2pa["status"] = verification["status"]
+            c2pa["verification"] = (
+                "independent-verifier-passed"
+                if verification.get("status") == "SIGNED_VERIFIED"
+                else "independent-verifier-did-not-pass"
+            )
         self._record_event(
             project,
             action="content_credentials.verified",
@@ -12510,6 +12570,7 @@ class MediaForgeService:
         if not project.delivery_package:
             raise WorkflowError("package delivery before release")
         self._require_production_stage_lock(project, "delivery")
+        self._require_release_content_credentials(project)
         package_verification = self.verify_delivery_package(
             project_id,
             actor="release-gate",
@@ -13320,6 +13381,22 @@ class MediaForgeService:
             "on",
         }
 
+    @staticmethod
+    def release_content_credentials_required() -> bool:
+        return os.getenv(
+            "MEDIAFORGE_REQUIRE_RELEASE_CONTENT_CREDENTIALS", "false"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+
+    def _require_release_content_credentials(self, project: ProjectRuntime) -> None:
+        if not self.release_content_credentials_required():
+            return
+        credentials = self.project_content_credentials(project.brief.project_id)
+        final_media = credentials.get("summary", {}).get("final_media", {})
+        if not isinstance(final_media, dict) or not final_media.get("ready"):
+            raise WorkflowError(
+                "current final MP4 requires an independently verified C2PA content credential before release"
+            )
+
     def _stage_fingerprint(self, project: ProjectRuntime, stage_key: str) -> str:
         """Fingerprint only the evidence owned by one production stage."""
         shots = list(project.shots.values())
@@ -13493,7 +13570,7 @@ class MediaForgeService:
         if stage_key == "delivery":
             compliance = self.project_compliance(project.brief.project_id)
             continuity = self.project_continuity(project.brief.project_id)
-            return [
+            gates = [
                 self._workflow_gate(
                     "delivery_package",
                     "交付包",
@@ -13513,6 +13590,21 @@ class MediaForgeService:
                     "门禁通过" if compliance.get("passed") and continuity.get("passed") else "需要解决合规或连续性问题",
                 ),
             ]
+            if self.release_content_credentials_required():
+                final_media = self.project_content_credentials(
+                    project.brief.project_id
+                )["summary"]["final_media"]
+                gates.append(
+                    self._workflow_gate(
+                        "final_media_content_credential",
+                        "最终成片内容凭证",
+                        bool(final_media.get("ready")),
+                        "当前成片已签名并独立验证"
+                        if final_media.get("ready")
+                        else "需要为当前最终 MP4 创建并独立验证 C2PA 凭证",
+                    )
+                )
+            return gates
         raise WorkflowError(f"unknown production stage: {stage_key}")
 
     def production_workflow(self, project_id: str) -> dict[str, Any]:
