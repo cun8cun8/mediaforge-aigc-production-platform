@@ -125,6 +125,8 @@ MEDIAFORGE_RATE_LIMIT_ENABLED=true
 
 For S3 or MinIO, inject `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` only through the deployment secret mechanism. The artifact root remains a shared editable volume; object storage is used for verified delivery/archive objects and integrity receipts.
 
+For an executable pre-production baseline, use the repository's [staging Compose guide](../ops/staging/README.md). It generates ignored local credentials, creates a private MinIO bucket before API startup, and exercises PostgreSQL, Redis and S3-compatible probes without requiring a real Provider.
+
 ## Identity And Tenant Mapping
 
 For an enterprise identity provider, configure OIDC introspection at minimum:

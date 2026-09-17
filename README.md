@@ -154,6 +154,18 @@ python -m mediaforge_p1.provider_probe --provider replicate
 | 高可用 | 控制面故障切换 | leased API、Nginx、共享 RWX 存储、监控 | `docker-compose.ha.yml`、[发布清单](docs/release-checklist.md) |
 | Kubernetes | 多节点和 GPU 资源编排 | `k8s/base` 与 GPU/网络策略 overlay | [Kubernetes 指南](k8s/README.md) |
 
+### 本地预发布基线
+
+仓库提供单控制面的预发布 Compose，用于在接入真实模型前验证 PostgreSQL、Redis、MinIO、鉴权、阶段锁定、对象归档和 Worker 租约。它不会打包 GPU 模型或代替生产高可用部署。
+
+```powershell
+.\ops\staging\bootstrap.ps1
+docker compose -f docker-compose.staging.yml up --build -d
+.\ops\staging\verify.ps1
+```
+
+工作台地址为 [http://127.0.0.1:8021](http://127.0.0.1:8021)。默认使用 Mock Provider；在成本审批和工作流审核完成后，再按[预发布指南](ops/staging/README.md#comfyui-staging-profile)启用 ComfyUI。
+
 生产运行的核心变量：
 
 ```text
@@ -211,6 +223,7 @@ GitHub Actions 会运行 Python 回归、浏览器验收、Compose/Kubernetes �
 | 分阶段规划、人工复核和恢复 | [Staged Planning](docs/staged-planning.md) |
 | PostgreSQL、Redis、MinIO、OIDC、监控、备份 | [生产部署](docs/production-deployment.md) |
 | 发布前质量门与运维验收 | [发布清单](docs/release-checklist.md) |
+| 单控制面预发布 Compose 与 ComfyUI 切换 | [预发布指南](ops/staging/README.md) |
 | 所有运行时 API 与细节 | [运行时参考](docs/runtime-reference.md) |
 | 早期选型和技术调研 | [P-1 技术研究](docs/p1-technical-research.md) |
 

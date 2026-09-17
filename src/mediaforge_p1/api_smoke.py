@@ -21,6 +21,23 @@ class ApiSmokeError(RuntimeError):
     pass
 
 
+def admin_token_from_environment() -> str:
+    """Return a locally configured admin token for in-runtime smoke execution."""
+    raw = os.getenv("MEDIAFORGE_API_KEYS", "").strip()
+    if not raw:
+        return ""
+    try:
+        credentials = json.loads(raw)
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(credentials, dict):
+        return ""
+    for token, principal in credentials.items():
+        if isinstance(principal, dict) and principal.get("role") == "admin":
+            return str(token).strip()
+    return ""
+
+
 def request_json(
     base_url: str,
     method: str,
@@ -60,6 +77,46 @@ def request_json(
         raise ApiSmokeError(f"{method} {path} failed: {exc.code} {detail}") from exc
     except (URLError, TimeoutError, json.JSONDecodeError) as exc:
         raise ApiSmokeError(f"{method} {path} failed: {exc}") from exc
+
+
+def ensure_stage_locked(
+    base_url: str,
+    project_id: str,
+    stage_key: str,
+    *,
+    actor: str = "smoke-runner",
+) -> dict[str, Any]:
+    """Lock a stage when it is ready, preserving an already-current lock."""
+    workflow = request_json(base_url, "GET", f"/projects/{project_id}/workflow")
+    try:
+        stage = next(item for item in workflow["stages"] if item["key"] == stage_key)
+    except StopIteration as exc:
+        raise ApiSmokeError(f"workflow stage is missing: {stage_key}") from exc
+    if stage["status"] == "LOCKED":
+        return workflow
+    if not stage["can_lock"]:
+        failed_gates = [
+            gate["label"] for gate in stage["gates"] if not gate["passed"]
+        ]
+        detail = ", ".join(failed_gates) or stage["status"]
+        raise ApiSmokeError(f"workflow stage cannot be locked: {stage_key}: {detail}")
+    return request_json(
+        base_url,
+        "POST",
+        f"/projects/{project_id}/workflow/stages/{stage_key}/lock",
+        {"actor": actor},
+    )
+
+
+def ensure_stage_locks(
+    base_url: str,
+    project_id: str,
+    stage_keys: tuple[str, ...],
+    *,
+    actor: str = "smoke-runner",
+) -> None:
+    for stage_key in stage_keys:
+        ensure_stage_locked(base_url, project_id, stage_key, actor=actor)
 
 
 def run_smoke(base_url: str, project_id: str) -> dict[str, Any]:
@@ -111,6 +168,11 @@ def run_smoke(base_url: str, project_id: str) -> dict[str, Any]:
     request_json(base_url, "POST", "/projects", callback_brief)
     callback_plan = request_json(base_url, "POST", f"/projects/{callback_project_id}/plan")
     callback_shot_id = callback_plan["shots"][0]["shot"]["shot_id"]
+    ensure_stage_locks(
+        base_url,
+        callback_project_id,
+        ("script", "storyboard", "assets"),
+    )
     callback_queued = request_json(
         base_url,
         "POST",
@@ -168,6 +230,11 @@ def run_smoke(base_url: str, project_id: str) -> dict[str, Any]:
         raise ApiSmokeError("audio track governance metadata was not persisted")
     plan = request_json(base_url, "POST", f"/projects/{project_id}/plan")
     shots = plan["shots"]
+    ensure_stage_locks(
+        base_url,
+        project_id,
+        ("script", "storyboard", "assets"),
+    )
     continuity = request_json(
         base_url,
         "GET",
@@ -204,6 +271,13 @@ def run_smoke(base_url: str, project_id: str) -> dict[str, Any]:
         f"/projects/{project_id}/shots/{first_shot_id}/revise",
         {"comment": "Smoke test revision run."},
     )
+    if revision.get("requires_stage_lock"):
+        ensure_stage_locks(base_url, project_id, ("storyboard", "assets"))
+        revision = request_json(
+            base_url,
+            "POST",
+            f"/projects/{project_id}/shots/{first_shot_id}/submit",
+        )
     comparison = request_json(
         base_url,
         "POST",
@@ -247,6 +321,7 @@ def run_smoke(base_url: str, project_id: str) -> dict[str, Any]:
         f"/projects/{project_id}/shots/approve-ready",
         {"comment": "Smoke test batch approval."},
     )
+    ensure_stage_locked(base_url, project_id, "video")
 
     exported = request_json(base_url, "POST", f"/projects/{project_id}/export")
     final_audio = Path(exported.get("final_mp4", ""))
@@ -254,6 +329,7 @@ def run_smoke(base_url: str, project_id: str) -> dict[str, Any]:
         raise ApiSmokeError("final sample does not contain a readable audio stream")
     if exported.get("audio_track") != str(registered_audio):
         raise ApiSmokeError("final export lost the configured audio track")
+    ensure_stage_locked(base_url, project_id, "postproduction")
     packaged = request_json(base_url, "POST", f"/projects/{project_id}/package")
     with zipfile.ZipFile(packaged["package_zip"]) as package_archive:
         if not any(
@@ -310,6 +386,7 @@ def run_smoke(base_url: str, project_id: str) -> dict[str, Any]:
         raise ApiSmokeError("compliance report blocked release")
     if not continuity_export["report"]["passed"]:
         raise ApiSmokeError("continuity report blocked release")
+    ensure_stage_locked(base_url, project_id, "delivery")
     released = request_json(
         base_url,
         "POST",
@@ -605,6 +682,11 @@ def run_smoke(base_url: str, project_id: str) -> dict[str, Any]:
     cloned_audio = Path(cloned.get("audio_track", ""))
     if not cloned_audio.is_file() or not probe_audio(cloned_audio).valid:
         raise ApiSmokeError("cloned project did not preserve a readable audio track")
+    ensure_stage_locks(
+        base_url,
+        branch_id,
+        ("script", "storyboard", "assets"),
+    )
     branch_queue = request_json(
         base_url,
         "POST",
@@ -752,6 +834,8 @@ def main() -> int:
         default=f"smoke_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
     )
     args = parser.parse_args()
+    if not args.token:
+        args.token = admin_token_from_environment()
     if args.token:
         os.environ["MEDIAFORGE_SMOKE_TOKEN"] = args.token
     try:

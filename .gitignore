@@ -6,4 +6,8 @@ __pycache__/
 node_modules/
 artifacts/
 ops/secrets/
+ops/staging/.env.staging
+ops/staging/.env.provider
+ops/staging/provider-config/*
+!ops/staging/provider-config/.gitkeep
 backups/

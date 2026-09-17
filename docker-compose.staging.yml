@@ -1,0 +1,139 @@
+name: mediaforge-staging
+
+# A single-control-plane pre-production baseline. It uses the same durable
+# adapters as production without pretending to provide HA or a bundled GPU model.
+services:
+  postgres:
+    image: postgres:16-alpine
+    env_file:
+      - ./ops/staging/.env.staging
+    environment:
+      POSTGRES_DB: mediaforge_staging
+      POSTGRES_USER: mediaforge_staging
+    volumes:
+      - mediaforge-staging-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mediaforge_staging -d mediaforge_staging"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    env_file:
+      - ./ops/staging/.env.staging
+    command: ["/bin/sh", "-ec", "exec redis-server --appendonly yes --requirepass \"$${REDIS_PASSWORD}\""]
+    volumes:
+      - mediaforge-staging-redis:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    env_file:
+      - ./ops/staging/.env.staging
+    command: ["server", "/data", "--console-address", ":9001"]
+    ports:
+      - "127.0.0.1:19001:9001"
+    volumes:
+      - mediaforge-staging-minio:/data
+    restart: unless-stopped
+
+  minio-init:
+    # Digest pin keeps the bootstrap utility reproducible; it is intentionally
+    # separate from the MinIO server image used by this staging topology.
+    image: minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+    env_file:
+      - ./ops/staging/.env.staging
+    depends_on:
+      - minio
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        until mc alias set mediaforge http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"; do sleep 2; done
+        mc mb --ignore-existing "mediaforge/$${MEDIAFORGE_STORAGE_BUCKET}"
+        mc anonymous set none "mediaforge/$${MEDIAFORGE_STORAGE_BUCKET}"
+
+  mediaforge:
+    build: .
+    env_file:
+      - ./ops/staging/.env.staging
+      - path: ./ops/staging/.env.provider
+        required: false
+    environment:
+      MEDIAFORGE_ARTIFACT_ROOT: /var/lib/mediaforge/artifacts
+      MEDIAFORGE_STATE_BACKEND: postgres
+      MEDIAFORGE_QUEUE_BACKEND: redis
+      MEDIAFORGE_STORAGE_MODE: s3
+      MEDIAFORGE_CONTROL_PLANE_MODE: single
+      MEDIAFORGE_AUTH_MODE: required
+      MEDIAFORGE_REQUIRE_STAGE_LOCKS: "true"
+      MEDIAFORGE_RATE_LIMIT_ENABLED: "true"
+      AWS_DEFAULT_REGION: us-east-1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:8021:8020"
+    volumes:
+      - mediaforge-staging-artifacts:/var/lib/mediaforge
+      - ./ops/staging/provider-config:/app/provider-config:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8020/health', timeout=4).close()"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  mediaforge-worker:
+    build: .
+    profiles: ["worker"]
+    env_file:
+      - ./ops/staging/.env.staging
+      - path: ./ops/staging/.env.provider
+        required: false
+    depends_on:
+      mediaforge:
+        condition: service_healthy
+    command:
+      [
+        "mediaforge-worker",
+        "--base-url",
+        "http://mediaforge:8020",
+        "--worker-id",
+        "staging-worker-01",
+        "--capability",
+        "image_generation",
+        "--capability",
+        "image_to_video",
+        "--concurrency",
+        "1",
+        "--poll-interval",
+        "5"
+      ]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import json, os; from urllib.request import Request, urlopen; token=os.environ['MEDIAFORGE_WORKER_TOKEN']; request=Request('http://mediaforge:8020/workers', headers={'Authorization': 'Bearer ' + token}); workers=json.loads(urlopen(request, timeout=4).read())['workers']; assert any(item['worker_id'] == 'staging-worker-01' and item['status'] == 'ONLINE' for item in workers)\""
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 15s
+    restart: unless-stopped
+
+volumes:
+  mediaforge-staging-postgres:
+  mediaforge-staging-redis:
+  mediaforge-staging-minio:
+  mediaforge-staging-artifacts:

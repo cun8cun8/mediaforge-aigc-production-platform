@@ -10039,18 +10039,21 @@ class MediaForgeService:
 
         submitted = []
         skipped = []
+        prepared_for_stage_lock = []
         for shot_id, runtime in project.shots.items():
             if runtime.current_artifact and runtime.review_status != ReviewStatus.CHANGES_REQUESTED:
                 skipped.append(shot_id)
                 continue
             if runtime.current_artifact and runtime.review_status == ReviewStatus.CHANGES_REQUESTED:
-                submitted.append(
-                    self.revise_shot(
-                        project_id,
-                        shot_id,
-                        comment="Batch revision requested.",
-                    )
+                revision = self.revise_shot(
+                    project_id,
+                    shot_id,
+                    comment="Batch revision requested.",
                 )
+                if revision.get("requires_stage_lock"):
+                    prepared_for_stage_lock.append(shot_id)
+                else:
+                    submitted.append(revision)
                 continue
             submitted.append(self.submit_shot(project_id, shot_id))
 
@@ -10059,13 +10062,18 @@ class MediaForgeService:
             action="project.batch_submitted",
             actor="studio-user",
             message=f"{len(submitted)} shot(s) submitted in batch.",
-            details={"submitted": len(submitted), "skipped": skipped},
+            details={
+                "submitted": len(submitted),
+                "skipped": skipped,
+                "prepared_for_stage_lock": prepared_for_stage_lock,
+            },
         )
         self._persist()
         return {
             "project_id": project_id,
             "submitted": len(submitted),
             "skipped": skipped,
+            "prepared_for_stage_lock": prepared_for_stage_lock,
             "project": self.project_view(project_id),
         }
 
@@ -10222,7 +10230,18 @@ class MediaForgeService:
             shot_id=shot_id,
             details={"revision": runtime.revision, "comment": comment},
         )
+        self._invalidate_workflow_from(
+            project,
+            "assets",
+            reason="shot_revision_requested",
+            actor="revision-agent",
+        )
         self._persist()
+        if self.stage_locking_required():
+            response = self.shot_view(runtime)
+            response["requires_stage_lock"] = True
+            response["next_stage"] = "assets"
+            return response
         return self.submit_shot(project_id, shot_id)
 
     def export_project(self, project_id: str) -> dict[str, Any]:

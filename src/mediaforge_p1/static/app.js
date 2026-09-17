@@ -5151,11 +5151,11 @@ async function handleShotAction(action, shotId) {
       await reviewShot("CHANGES_REQUESTED");
       logEvent(`${shotId} 已退回返工。`, "muted");
     } else if (action === "revise") {
-      await request(`/projects/${encodedProject}/shots/${encodedShot}/revise`, {
+      const result = await request(`/projects/${encodedProject}/shots/${encodedShot}/revise`, {
         method: "POST",
         body: JSON.stringify({ comment: $("reviewComment").value.trim() }),
       });
-      logEvent(`${shotId} 返工版本已生成。`);
+      logEvent(result.requires_stage_lock ? `${shotId} 返修已准备，请重新锁定资产阶段后生成。` : `${shotId} 返工版本已生成。`);
     }
     await loadProjectContext(state.projectId);
   } catch (error) {

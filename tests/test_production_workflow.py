@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from mediaforge_p1.contracts import CreativeBrief
+from mediaforge_p1.contracts import CreativeBrief, ReviewStatus
 from mediaforge_p1.service import MediaForgeService, WorkflowError
 
 
@@ -86,3 +86,29 @@ def test_required_stage_locks_guard_actual_generation(tmp_path, monkeypatch):
     service.lock_production_stage("workflow_enforced", "assets")
     result = service.submit_shot("workflow_enforced", shot_id)
     assert result["artifact"]
+
+
+def test_required_stage_locks_prepare_revision_for_relock(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEDIAFORGE_REQUIRE_STAGE_LOCKS", "true")
+    service = MediaForgeService(tmp_path)
+    service.create_project(brief("workflow_revision_lock"))
+    plan = service.generate_plan("workflow_revision_lock")
+    shot_id = plan["shots"][0]["shot"]["shot_id"]
+
+    for stage_key in ("script", "storyboard", "assets"):
+        service.lock_production_stage("workflow_revision_lock", stage_key)
+    service.submit_shot("workflow_revision_lock", shot_id)
+    service.review_shot(
+        "workflow_revision_lock",
+        shot_id,
+        status=ReviewStatus.CHANGES_REQUESTED,
+    )
+
+    prepared = service.revise_shot("workflow_revision_lock", shot_id, comment="Rework")
+    assert prepared["requires_stage_lock"] is True
+    assert prepared["artifact"] is None
+    assert stage(service.production_workflow("workflow_revision_lock"), "assets")["status"] == "REWORK"
+
+    service.lock_production_stage("workflow_revision_lock", "assets")
+    regenerated = service.submit_shot("workflow_revision_lock", shot_id)
+    assert regenerated["artifact"]

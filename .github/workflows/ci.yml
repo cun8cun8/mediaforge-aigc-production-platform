@@ -47,6 +47,9 @@ jobs:
           docker compose --env-file .env.example -f docker-compose.yml --profile gpu-worker config --quiet
           docker compose --env-file .env.example -f docker-compose.ha.yml config --quiet
           docker compose --env-file .env.example -f docker-compose.ha.yml --profile gpu-worker config --quiet
+          cp ops/staging/.env.staging.example ops/staging/.env.staging
+          docker compose -f docker-compose.staging.yml config --quiet
+          rm ops/staging/.env.staging
       - name: Render Kubernetes overlays
         run: |
           kubectl kustomize k8s/base > /dev/null
