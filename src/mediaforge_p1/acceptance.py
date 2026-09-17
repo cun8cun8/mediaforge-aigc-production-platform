@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from .provider_probe_receipt import (
@@ -85,6 +86,7 @@ def run_production_acceptance(
     provider_probe_receipts: list[Path] | None = None,
     provider_probe_secret: str = "",
     provider_probe_max_age_hours: float = 168.0,
+    release_projects: list[str] | None = None,
 ) -> dict[str, Any]:
     """Run non-destructive API acceptance checks without exposing credentials.
 
@@ -342,6 +344,76 @@ def run_production_acceptance(
             )
         )
 
+    configured_release_projects = sorted(
+        {
+            project_id.strip()
+            for project_id in release_projects or []
+            if project_id and project_id.strip()
+        }
+    )
+    if configured_release_projects:
+        project_rows: list[dict[str, int | bool]] = []
+        for project_id in configured_release_projects:
+            try:
+                payload = fetch_json(
+                    base_url,
+                    f"/projects/{quote(project_id, safe='')}/content-credentials",
+                    token=token,
+                )
+            except AcceptanceError:
+                project_rows.append(
+                    {
+                        "credential_count": 0,
+                        "signed_verified_count": 0,
+                        "passed": False,
+                    }
+                )
+                continue
+            credentials = payload.get("credentials") or []
+            if not isinstance(credentials, list):
+                credentials = []
+            signed_verified_count = sum(
+                1
+                for credential in credentials
+                if isinstance(credential, dict)
+                and str((credential.get("c2pa") or {}).get("status") or "")
+                == "SIGNED_VERIFIED"
+                and str((credential.get("verification") or {}).get("status") or "")
+                == "SIGNED_VERIFIED"
+            )
+            project_rows.append(
+                {
+                    "credential_count": len(credentials),
+                    "signed_verified_count": signed_verified_count,
+                    "passed": signed_verified_count > 0,
+                }
+            )
+        release_credentials_passed = all(
+            bool(item["passed"]) for item in project_rows
+        )
+        checks.append(
+            _check(
+                "release_content_credentials",
+                release_credentials_passed,
+                require_production,
+                "Every release project has independently verified C2PA content credentials."
+                if release_credentials_passed
+                else "At least one release project has no independently verified C2PA content credential.",
+                {
+                    "release_project_count": len(project_rows),
+                    "credential_count": sum(
+                        int(item["credential_count"]) for item in project_rows
+                    ),
+                    "signed_verified_count": sum(
+                        int(item["signed_verified_count"]) for item in project_rows
+                    ),
+                    "projects_with_signed_verified_credentials": sum(
+                        1 for item in project_rows if item["passed"]
+                    ),
+                },
+            )
+        )
+
     source_ingest = get("source_ingest", "/source-ingest/status")
     if source_ingest is not None:
         valid = source_ingest.get("configuration_error") is None
@@ -518,6 +590,17 @@ def main() -> int:
     parser.add_argument("--probe-enterprise", action="store_true")
     parser.add_argument("--probe-planning", action="store_true")
     parser.add_argument(
+        "--release-project",
+        action="append",
+        default=[
+            item.strip()
+            for item in os.getenv("MEDIAFORGE_RELEASE_PROJECTS", "").split(",")
+            if item.strip()
+        ],
+        metavar="PROJECT_ID",
+        help="release project requiring at least one independently verified C2PA credential; repeat as needed",
+    )
+    parser.add_argument(
         "--provider-probe-receipt",
         action="append",
         type=Path,
@@ -574,6 +657,7 @@ def main() -> int:
             provider_probe_receipts=args.provider_probe_receipt,
             provider_probe_secret=provider_probe_secret,
             provider_probe_max_age_hours=args.provider_probe_max_age_hours,
+            release_projects=args.release_project,
         )
     except AcceptanceError as exc:
         parser.error(str(exc))

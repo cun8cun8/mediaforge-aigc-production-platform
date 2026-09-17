@@ -426,3 +426,86 @@ def test_strict_acceptance_blocks_missing_c2pa_signer_or_verifier(monkeypatch) -
         require_production=True,
     )
     assert report["blocking_failures"] == ["content_credentials"]
+
+
+def test_release_project_acceptance_requires_signed_verified_c2pa_evidence(monkeypatch) -> None:
+    payloads = {
+        "/health": {"status": "ok"},
+        "/providers/diagnostics": {
+            "grade": "SIMULATION",
+            "ready": True,
+            "production_ready": True,
+        },
+        "/providers/contracts": {
+            "provider_count": 1,
+            "summary": {
+                "protocol_passed": True,
+                "planned_shot_count": 0,
+                "unroutable_shot_count": 0,
+            },
+        },
+        "/content-credentials/status": {
+            "mode": "external-c2pa-signer",
+            "configured": True,
+            "verifier_configured": True,
+            "production_ready": True,
+        },
+        "/projects/release-project/content-credentials": {
+            "credentials": [
+                {
+                    "c2pa": {"status": "SIGNED_UNVERIFIED"},
+                    "verification": {"status": "SIGNED_UNVERIFIED"},
+                }
+            ]
+        },
+        "/source-ingest/status": {"configuration_error": None},
+        "/planning/status": {},
+        "/enterprise/status": {},
+        "/ops/readiness": {
+            "ready": True,
+            "production_ready": True,
+            "grade": "READY",
+            "blocking_failures": [],
+            "warnings": [],
+        },
+        "/ops/alerts": {"critical_count": 0, "warning_count": 0},
+    }
+    monkeypatch.setattr(
+        acceptance,
+        "fetch_json",
+        lambda _base_url, path, **_kwargs: payloads[path],
+    )
+
+    unsigned = acceptance.run_production_acceptance(
+        "https://staging.example.com",
+        require_production=True,
+        release_projects=["release-project"],
+    )
+    assert unsigned["blocking_failures"] == ["release_content_credentials"]
+    assert "release-project" not in json.dumps(unsigned)
+
+    payloads["/projects/release-project/content-credentials"] = {
+        "credentials": [
+            {
+                "c2pa": {"status": "SIGNED_VERIFIED"},
+                "verification": {"status": "SIGNED_VERIFIED"},
+            }
+        ]
+    }
+    verified = acceptance.run_production_acceptance(
+        "https://staging.example.com",
+        require_production=True,
+        release_projects=["release-project"],
+    )
+    assert verified["passed"] is True
+    evidence = next(
+        item
+        for item in verified["checks"]
+        if item["code"] == "release_content_credentials"
+    )
+    assert evidence["detail"] == {
+        "release_project_count": 1,
+        "credential_count": 1,
+        "signed_verified_count": 1,
+        "projects_with_signed_verified_credentials": 1,
+    }

@@ -36,6 +36,8 @@ Run the non-destructive deployment acceptance report after configuring an API
 instance. It checks API, Provider diagnostics, OCR, planning, enterprise
 runtime and readiness without submitting a paid media job. `--require-production`
 returns a non-zero status unless real Provider and enterprise requirements are met.
+Add `--release-project <project-id>` for a content delivery decision: it requires
+at least one `SIGNED_VERIFIED` content credential on every supplied project.
 
 ```powershell
 mediaforge-production-acceptance --base-url http://127.0.0.1:8020 --token $env:MEDIAFORGE_READINESS_TOKEN --probe-enterprise --probe-planning --require-production

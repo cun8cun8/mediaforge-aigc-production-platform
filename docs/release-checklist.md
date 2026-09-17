@@ -71,6 +71,7 @@ mediaforge-production-acceptance `
   --token $env:MEDIAFORGE_READINESS_TOKEN `
   --probe-enterprise `
   --probe-planning `
+  --release-project <released-project-id> `
   --provider-probe-receipt artifacts/provider-probe/manifest.json `
   --provider-probe-secret-file ops/secrets/provider-probe-receipt-secret `
   --require-production

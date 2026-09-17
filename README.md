@@ -192,6 +192,7 @@ mediaforge-production-acceptance `
   --token $env:MEDIAFORGE_READINESS_TOKEN `
   --probe-enterprise `
   --probe-planning `
+  --release-project <released-project-id> `
   --require-production
 ```
 

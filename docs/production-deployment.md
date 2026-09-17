@@ -44,6 +44,9 @@ value through `--provider-probe-secret-file` or
 `MEDIAFORGE_PROVIDER_PROBE_RECEIPT_SECRET_FILE`. `--require-production` fails
 when Mock mode, identity, shared queue, persistent storage, callback protection
 or Provider probe evidence leave the deployment below production requirements.
+For a concrete content release, add `--release-project <project-id>`; strict
+acceptance then requires that project to contain at least one content credential
+whose C2PA and independent verification statuses are both `SIGNED_VERIFIED`.
 
 ## GPU Worker Local Execution
 
@@ -83,6 +86,7 @@ mediaforge-provider-probe --provider local --output artifacts/provider-probe
 mediaforge-production-acceptance `
   --base-url http://127.0.0.1:8020 `
   --token $env:MEDIAFORGE_READINESS_TOKEN `
+  --release-project <released-project-id> `
   --provider-probe-receipt artifacts/provider-probe/manifest.json `
   --provider-probe-secret-file ops/secrets/provider-probe-receipt-secret `
   --require-production
