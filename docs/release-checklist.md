@@ -47,7 +47,7 @@ This checklist is the deployment decision record for MediaForge. A green CI run 
 - [ ] Quality, continuity, rights and provenance reports are inspected by the designated reviewer.
 - [ ] All source assets required for release have active rights evidence and valid dates.
 - [ ] Delivery package builds, verifies and can be re-imported or independently inspected.
-- [ ] C2PA is only marked verified after a separate verifier command succeeds; unsigned output is not represented as signed.
+- [ ] `/content-credentials/status` reports both signer and independent verifier configured; C2PA is only marked verified after a separate verifier command succeeds.
 
 ## 6. Observability And Operations
 

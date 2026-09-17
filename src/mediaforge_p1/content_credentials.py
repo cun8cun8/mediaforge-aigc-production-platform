@@ -56,14 +56,17 @@ class ContentCredentials:
         self.settings = settings or ContentCredentialSettings.from_env()
 
     def status_view(self) -> dict[str, Any]:
+        signer_configured = self.settings.signer_command is not None
+        verifier_configured = self.settings.verifier_command is not None
         return {
             "schema_version": "mediaforge-content-credentials-adapter-v1",
-            "configured": self.settings.signer_command is not None,
-            "mode": "external-c2pa-signer" if self.settings.signer_command else "claim-only",
-            "verifier_configured": self.settings.verifier_command is not None,
+            "configured": signer_configured,
+            "mode": "external-c2pa-signer" if signer_configured else "claim-only",
+            "verifier_configured": verifier_configured,
+            "production_ready": signer_configured and verifier_configured,
             "message": (
                 "An external C2PA signer command is configured."
-                if self.settings.signer_command
+                if signer_configured
                 else "No C2PA signer is configured; credentials are emitted as unsigned claims."
             ),
             "timeout_seconds": self.settings.timeout_seconds,

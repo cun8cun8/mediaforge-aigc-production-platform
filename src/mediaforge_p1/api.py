@@ -2544,6 +2544,10 @@ def create_app(output_root: Path | None = None) -> FastAPI:
         except ProjectNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @app.get("/content-credentials/status")
+    def get_content_credentials_status() -> dict[str, Any]:
+        return service.content_credentials_status()
+
     @app.post("/projects/{project_id}/content-credentials")
     def create_project_content_credential(
         project_id: str,

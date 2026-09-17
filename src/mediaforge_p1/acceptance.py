@@ -320,6 +320,28 @@ def run_production_acceptance(
             )
         )
 
+    content_credentials = get("content_credentials", "/content-credentials/status")
+    if content_credentials is not None:
+        signer_configured = bool(content_credentials.get("configured"))
+        verifier_configured = bool(content_credentials.get("verifier_configured"))
+        c2pa_ready = signer_configured and verifier_configured
+        checks.append(
+            _check(
+                "content_credentials",
+                c2pa_ready,
+                require_production,
+                "C2PA signer and independent verifier are configured."
+                if c2pa_ready
+                else "Production C2PA requires both a signer and an independent verifier.",
+                {
+                    "mode": content_credentials.get("mode"),
+                    "signer_configured": signer_configured,
+                    "verifier_configured": verifier_configured,
+                    "production_ready": bool(content_credentials.get("production_ready")),
+                },
+            )
+        )
+
     source_ingest = get("source_ingest", "/source-ingest/status")
     if source_ingest is not None:
         valid = source_ingest.get("configuration_error") is None

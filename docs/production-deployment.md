@@ -17,6 +17,7 @@ $headers = @{ Authorization = "Bearer $env:MEDIAFORGE_READINESS_TOKEN" }
 Invoke-RestMethod http://127.0.0.1:8020/health
 Invoke-RestMethod http://127.0.0.1:8020/auth/status
 Invoke-RestMethod http://127.0.0.1:8020/providers/diagnostics
+Invoke-RestMethod http://127.0.0.1:8020/content-credentials/status
 Invoke-RestMethod http://127.0.0.1:8020/llm/status
 Invoke-RestMethod http://127.0.0.1:8020/webhooks/status -Headers $headers
 Invoke-RestMethod http://127.0.0.1:8020/delivery/status -Headers $headers

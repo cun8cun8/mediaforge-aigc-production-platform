@@ -95,6 +95,12 @@ def test_production_acceptance_is_non_destructive_and_can_require_production(
                         "unroutable_shot_count": 0,
                     },
                 },
+                "/content-credentials/status": {
+                    "mode": "external-c2pa-signer",
+                    "configured": True,
+                    "verifier_configured": True,
+                    "production_ready": True,
+                },
                 "/source-ingest/status": {
                     "configured": False,
                     "mode": "disabled",
@@ -144,6 +150,7 @@ def test_production_acceptance_is_non_destructive_and_can_require_production(
             "provider_diagnostics",
             "provider_callback_security",
             "provider_contract",
+            "content_credentials",
             "source_ingest",
             "planning_status",
             "enterprise_status",
@@ -214,6 +221,12 @@ def test_strict_acceptance_blocks_incomplete_comfyui_governance(tmp_path, monkey
                 "planned_shot_count": 0,
                 "unroutable_shot_count": 0,
             },
+        },
+        "/content-credentials/status": {
+            "mode": "external-c2pa-signer",
+            "configured": True,
+            "verifier_configured": True,
+            "production_ready": True,
         },
         "/source-ingest/status": {"configuration_error": None},
         "/planning/status": {},
@@ -291,6 +304,12 @@ def test_strict_acceptance_requires_recent_signed_provider_probe_receipts(
                 "unroutable_shot_count": 0,
             },
         },
+        "/content-credentials/status": {
+            "mode": "external-c2pa-signer",
+            "configured": True,
+            "verifier_configured": True,
+            "production_ready": True,
+        },
         "/source-ingest/status": {"configuration_error": None},
         "/planning/status": {},
         "/enterprise/status": {},
@@ -360,3 +379,50 @@ def test_strict_acceptance_requires_recent_signed_provider_probe_receipts(
         provider_probe_secret=PROBE_RECEIPT_SECRET,
     )
     assert stale["blocking_failures"] == ["provider_probe_receipts"]
+
+
+def test_strict_acceptance_blocks_missing_c2pa_signer_or_verifier(monkeypatch) -> None:
+    payloads = {
+        "/health": {"status": "ok"},
+        "/providers/diagnostics": {
+            "grade": "SIMULATION",
+            "ready": True,
+            "production_ready": True,
+        },
+        "/providers/contracts": {
+            "provider_count": 1,
+            "summary": {
+                "protocol_passed": True,
+                "planned_shot_count": 0,
+                "unroutable_shot_count": 0,
+            },
+        },
+        "/content-credentials/status": {
+            "mode": "claim-only",
+            "configured": False,
+            "verifier_configured": False,
+            "production_ready": False,
+        },
+        "/source-ingest/status": {"configuration_error": None},
+        "/planning/status": {},
+        "/enterprise/status": {},
+        "/ops/readiness": {
+            "ready": True,
+            "production_ready": True,
+            "grade": "READY",
+            "blocking_failures": [],
+            "warnings": [],
+        },
+        "/ops/alerts": {"critical_count": 0, "warning_count": 0},
+    }
+    monkeypatch.setattr(
+        acceptance,
+        "fetch_json",
+        lambda _base_url, path, **_kwargs: payloads[path],
+    )
+
+    report = acceptance.run_production_acceptance(
+        "https://staging.example.com",
+        require_production=True,
+    )
+    assert report["blocking_failures"] == ["content_credentials"]

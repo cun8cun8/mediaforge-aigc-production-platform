@@ -244,6 +244,9 @@ def test_collaboration_contract_and_credential_api_routes(tmp_path: Path) -> Non
             f"/projects/api_foundations/collaboration/locks/{lock_id}"
         ).status_code == 200
         assert client.get("/providers/contracts").status_code == 200
+        credentials_status = client.get("/content-credentials/status")
+        assert credentials_status.status_code == 200
+        assert credentials_status.json()["mode"] == "claim-only"
         assert client.post(
             "/projects/api_foundations/providers/contracts/validate", json={}
         ).status_code == 200
