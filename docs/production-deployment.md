@@ -35,9 +35,14 @@ mediaforge-production-acceptance --base-url http://127.0.0.1:8020 --token $env:M
 `artifacts/production-acceptance.json`. It checks the API, Provider diagnostics,
 OCR configuration, planning state, enterprise runtime and readiness. It does not
 submit a generation request; run `mediaforge-provider-probe` explicitly after
-approving any real Provider cost. `--require-production` fails when Mock mode,
-identity, shared queue, persistent storage or callback protection leave the
-deployment below production requirements.
+approving any real Provider cost. In strict mode, it also validates one recent,
+HMAC-signed probe receipt per enabled real Provider, including the local artifact
+hash and quality result. Configure the receipt signing value only in the secret
+manager as `MEDIAFORGE_PROVIDER_PROBE_RECEIPT_SECRET`; give acceptance the same
+value through `--provider-probe-secret-file` or
+`MEDIAFORGE_PROVIDER_PROBE_RECEIPT_SECRET_FILE`. `--require-production` fails
+when Mock mode, identity, shared queue, persistent storage, callback protection
+or Provider probe evidence leave the deployment below production requirements.
 
 ## GPU Worker Local Execution
 
@@ -72,8 +77,14 @@ Worker 镜像或受控挂载提供，通用应用镜像不会包含商业模型�
 先通过不产生工作流任务的诊断，再在批准成本后运行一次 Provider Probe：
 
 ```powershell
-mediaforge-production-acceptance --base-url http://127.0.0.1:8020 --token $env:MEDIAFORGE_READINESS_TOKEN --require-production
+$env:MEDIAFORGE_PROVIDER_PROBE_RECEIPT_SECRET = Get-Content ops/secrets/provider-probe-receipt-secret -Raw
 mediaforge-provider-probe --provider local --output artifacts/provider-probe
+mediaforge-production-acceptance `
+  --base-url http://127.0.0.1:8020 `
+  --token $env:MEDIAFORGE_READINESS_TOKEN `
+  --provider-probe-receipt artifacts/provider-probe/manifest.json `
+  --provider-probe-secret-file ops/secrets/provider-probe-receipt-secret `
+  --require-production
 ```
 
 ## Kubernetes

@@ -2,10 +2,51 @@ from __future__ import annotations
 
 import json
 import threading
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from mediaforge_p1 import acceptance
 from mediaforge_p1.acceptance import run_production_acceptance, write_report
+from mediaforge_p1.provider_probe_receipt import (
+    PROBE_RECEIPT_SCHEMA,
+    sha256_file,
+    sign_provider_probe_receipt,
+)
+
+
+PROBE_RECEIPT_SECRET = "provider-probe-receipt-secret-for-tests"
+
+
+def _write_provider_probe_receipt(
+    tmp_path,
+    *,
+    provider: str,
+    capability: str,
+    created_at: datetime | None = None,
+) -> object:
+    artifact = tmp_path / f"{provider}-{capability}.bin"
+    artifact.write_bytes(b"verified provider probe artifact")
+    receipt = {
+        "schema_version": PROBE_RECEIPT_SCHEMA,
+        "receipt_id": "provider_probe_test_receipt",
+        "status": "SUCCEEDED",
+        "created_at": (created_at or datetime.now(timezone.utc)).isoformat(),
+        "provider": provider,
+        "spec": {"provider_constraints": {"capability": capability}},
+        "artifact": {
+            "uri": str(artifact),
+            "sha256": sha256_file(artifact),
+            "size_bytes": artifact.stat().st_size,
+        },
+        "quality": {"valid": True},
+    }
+    receipt["receipt_signature"] = sign_provider_probe_receipt(
+        receipt,
+        PROBE_RECEIPT_SECRET,
+    )
+    receipt_path = tmp_path / f"{provider}-receipt.json"
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    return receipt_path
 
 
 def test_production_acceptance_is_non_destructive_and_can_require_production(
@@ -136,7 +177,7 @@ def test_production_acceptance_is_non_destructive_and_can_require_production(
         server.server_close()
 
 
-def test_strict_acceptance_blocks_incomplete_comfyui_governance(monkeypatch) -> None:
+def test_strict_acceptance_blocks_incomplete_comfyui_governance(tmp_path, monkeypatch) -> None:
     payloads = {
         "/health": {"status": "ok"},
         "/providers/diagnostics": {
@@ -192,9 +233,16 @@ def test_strict_acceptance_blocks_incomplete_comfyui_governance(monkeypatch) -> 
 
     monkeypatch.setattr(acceptance, "fetch_json", fake_fetch_json)
 
+    receipt_path = _write_provider_probe_receipt(
+        tmp_path,
+        provider="comfyui",
+        capability="image_generation",
+    )
     report = acceptance.run_production_acceptance(
         "https://staging.example.com",
         require_production=True,
+        provider_probe_receipts=[receipt_path],
+        provider_probe_secret=PROBE_RECEIPT_SECRET,
     )
 
     assert report["passed"] is False
@@ -215,3 +263,100 @@ def test_strict_acceptance_blocks_incomplete_comfyui_governance(monkeypatch) -> 
         }
     ]
     assert "must-not-appear-in-report" not in json.dumps(report)
+
+
+def test_strict_acceptance_requires_recent_signed_provider_probe_receipts(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    payloads = {
+        "/health": {"status": "ok"},
+        "/providers/diagnostics": {
+            "grade": "READY",
+            "ready": True,
+            "production_ready": True,
+            "callback_security": {"configured": True},
+            "status": {
+                "mode": "replicate",
+                "provider": "replicate-video",
+                "configured": True,
+                "capabilities": ["image_to_video"],
+            },
+        },
+        "/providers/contracts": {
+            "provider_count": 1,
+            "summary": {
+                "protocol_passed": True,
+                "planned_shot_count": 0,
+                "unroutable_shot_count": 0,
+            },
+        },
+        "/source-ingest/status": {"configuration_error": None},
+        "/planning/status": {},
+        "/enterprise/status": {},
+        "/ops/readiness": {
+            "ready": True,
+            "production_ready": True,
+            "grade": "READY",
+            "blocking_failures": [],
+            "warnings": [],
+        },
+        "/ops/alerts": {"critical_count": 0, "warning_count": 0},
+    }
+
+    monkeypatch.setattr(
+        acceptance,
+        "fetch_json",
+        lambda _base_url, path, **_kwargs: payloads[path],
+    )
+
+    missing = acceptance.run_production_acceptance(
+        "https://staging.example.com",
+        require_production=True,
+    )
+    assert missing["blocking_failures"] == ["provider_probe_receipts"]
+
+    receipt_path = _write_provider_probe_receipt(
+        tmp_path,
+        provider="replicate-video",
+        capability="image_to_video",
+    )
+    valid = acceptance.run_production_acceptance(
+        "https://staging.example.com",
+        require_production=True,
+        provider_probe_receipts=[receipt_path],
+        provider_probe_secret=PROBE_RECEIPT_SECRET,
+    )
+    assert valid["passed"] is True
+    receipt_check = next(
+        item for item in valid["checks"] if item["code"] == "provider_probe_receipts"
+    )
+    assert receipt_check["detail"]["covered_providers"] == ["replicate-video"]
+    assert str(tmp_path) not in json.dumps(valid)
+
+    wrong_capability_path = _write_provider_probe_receipt(
+        tmp_path,
+        provider="replicate-video",
+        capability="image_generation",
+    )
+    wrong_capability = acceptance.run_production_acceptance(
+        "https://staging.example.com",
+        require_production=True,
+        provider_probe_receipts=[wrong_capability_path],
+        provider_probe_secret=PROBE_RECEIPT_SECRET,
+    )
+    assert wrong_capability["blocking_failures"] == ["provider_probe_receipts"]
+
+    stale_path = _write_provider_probe_receipt(
+        tmp_path,
+        provider="replicate-video",
+        capability="image_to_video",
+        created_at=datetime.now(timezone.utc) - timedelta(hours=169),
+    )
+    stale = acceptance.run_production_acceptance(
+        "https://staging.example.com",
+        require_production=True,
+        provider_probe_receipts=[stale_path],
+        provider_probe_secret=PROBE_RECEIPT_SECRET,
+    )
+    assert stale["blocking_failures"] == ["provider_probe_receipts"]

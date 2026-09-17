@@ -9,6 +9,11 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from .provider_probe_receipt import (
+    ProviderProbeReceiptError,
+    validate_provider_probe_receipt,
+)
+
 
 class AcceptanceError(RuntimeError):
     pass
@@ -49,13 +54,13 @@ def fetch_text(base_url: str, path: str, *, token: str = "") -> str:
         raise AcceptanceError(f"{path} could not be read") from exc
 
 
-def read_secret_file(path: Path) -> str:
+def read_secret_file(path: Path, *, label: str = "secret") -> str:
     try:
         value = path.read_text(encoding="utf-8").strip()
     except OSError as exc:
-        raise AcceptanceError("metrics token file cannot be read") from exc
+        raise AcceptanceError(f"{label} file cannot be read") from exc
     if not value:
-        raise AcceptanceError("metrics token file is empty")
+        raise AcceptanceError(f"{label} file is empty")
     return value
 
 
@@ -77,12 +82,18 @@ def run_production_acceptance(
     require_production: bool = False,
     probe_enterprise: bool = False,
     probe_planning: bool = False,
+    provider_probe_receipts: list[Path] | None = None,
+    provider_probe_secret: str = "",
+    provider_probe_max_age_hours: float = 168.0,
 ) -> dict[str, Any]:
     """Run non-destructive API acceptance checks without exposing credentials.
 
     Provider media generation is intentionally excluded: it may incur cost and is
     exercised separately by ``mediaforge-provider-probe`` after operator approval.
     """
+    if provider_probe_max_age_hours <= 0:
+        raise AcceptanceError("provider probe maximum age must be greater than zero")
+
     checks: list[dict[str, Any]] = []
 
     def get(code: str, path: str) -> dict[str, Any] | None:
@@ -200,6 +211,91 @@ def run_production_acceptance(
                     if governance_passed
                     else "ComfyUI workflow pins, reviewed entries, or capability defaults are incomplete.",
                     {"providers": governance_rows},
+                )
+            )
+
+        receipt_paths = provider_probe_receipts or []
+        expected_providers: dict[str, dict[str, set[str]]] = {}
+        for row in real_providers:
+            provider_name = str(row.get("provider") or row.get("mode") or "").strip().lower()
+            if not provider_name:
+                continue
+            aliases = {
+                provider_name,
+                str(row.get("mode") or "").strip().lower(),
+            }
+            expected_providers[provider_name] = {
+                "aliases": {item for item in aliases if item},
+                "capabilities": {
+                    str(item).strip().lower()
+                    for item in row.get("capabilities") or []
+                    if str(item).strip()
+                },
+            }
+
+        receipt_rows: list[dict[str, Any]] = []
+        covered_providers: set[str] = set()
+        for receipt_path in receipt_paths:
+            try:
+                validated = validate_provider_probe_receipt(
+                    receipt_path,
+                    secret=provider_probe_secret,
+                    max_age_hours=provider_probe_max_age_hours,
+                )
+                matched_provider = next(
+                    (
+                        provider_name
+                        for provider_name, expected in expected_providers.items()
+                        if validated["provider"] in expected["aliases"]
+                    ),
+                    None,
+                )
+                capability_allowed = bool(
+                    matched_provider
+                    and validated["capability"]
+                    in expected_providers[matched_provider]["capabilities"]
+                )
+                receipt_rows.append(
+                    {
+                        "provider": validated["provider"],
+                        "capability": validated["capability"],
+                        "age_hours": validated["age_hours"],
+                        "valid": capability_allowed,
+                    }
+                )
+                if capability_allowed and matched_provider is not None:
+                    covered_providers.add(matched_provider)
+            except ProviderProbeReceiptError:
+                receipt_rows.append({"valid": False})
+        missing_providers = sorted(set(expected_providers) - covered_providers)
+        receipts_passed = (
+            not real_providers
+            or (
+                bool(provider_probe_secret.strip())
+                and bool(receipt_paths)
+                and not missing_providers
+                and all(item["valid"] for item in receipt_rows)
+            )
+        )
+        if real_providers or receipt_paths:
+            checks.append(
+                _check(
+                    "provider_probe_receipts",
+                    receipts_passed,
+                    require_production and bool(real_providers),
+                    "Recent signed Provider probe receipts cover every enabled real Provider."
+                    if receipts_passed
+                    else "Provider probe receipts are missing, invalid, stale, or do not cover every enabled real Provider.",
+                    {
+                        "configured_provider_count": len(expected_providers),
+                        "receipt_count": len(receipt_paths),
+                        "valid_receipt_count": sum(
+                            1 for item in receipt_rows if item["valid"]
+                        ),
+                        "covered_providers": sorted(covered_providers),
+                        "missing_providers": missing_providers,
+                        "max_age_hours": provider_probe_max_age_hours,
+                    },
                 )
             )
 
@@ -400,6 +496,33 @@ def main() -> int:
     parser.add_argument("--probe-enterprise", action="store_true")
     parser.add_argument("--probe-planning", action="store_true")
     parser.add_argument(
+        "--provider-probe-receipt",
+        action="append",
+        type=Path,
+        default=[
+            Path(item.strip())
+            for item in os.getenv("MEDIAFORGE_PROVIDER_PROBE_RECEIPTS", "").split(",")
+            if item.strip()
+        ],
+        help="signed provider probe manifest; repeat for each enabled real provider",
+    )
+    parser.add_argument(
+        "--provider-probe-secret-file",
+        type=Path,
+        default=(
+            Path(os.environ["MEDIAFORGE_PROVIDER_PROBE_RECEIPT_SECRET_FILE"])
+            if os.getenv("MEDIAFORGE_PROVIDER_PROBE_RECEIPT_SECRET_FILE", "").strip()
+            else None
+        ),
+        help="one-line provider probe receipt signature secret; the value is never reported",
+    )
+    parser.add_argument(
+        "--provider-probe-max-age-hours",
+        type=float,
+        default=float(os.getenv("MEDIAFORGE_PROVIDER_PROBE_MAX_AGE_HOURS", "168")),
+        help="maximum permitted age for signed provider probe receipts",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=Path("artifacts/production-acceptance.json"),
@@ -407,8 +530,16 @@ def main() -> int:
     args = parser.parse_args()
     try:
         metrics_token = (
-            read_secret_file(args.metrics_token_file)
+            read_secret_file(args.metrics_token_file, label="metrics token")
             if args.metrics_token_file is not None
+            else ""
+        )
+        provider_probe_secret = (
+            read_secret_file(
+                args.provider_probe_secret_file,
+                label="provider probe receipt signature secret",
+            )
+            if args.provider_probe_secret_file is not None
             else ""
         )
         report = run_production_acceptance(
@@ -418,6 +549,9 @@ def main() -> int:
             require_production=args.require_production,
             probe_enterprise=args.probe_enterprise,
             probe_planning=args.probe_planning,
+            provider_probe_receipts=args.provider_probe_receipt,
+            provider_probe_secret=provider_probe_secret,
+            provider_probe_max_age_hours=args.provider_probe_max_age_hours,
         )
     except AcceptanceError as exc:
         parser.error(str(exc))

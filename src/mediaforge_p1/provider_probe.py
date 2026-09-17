@@ -6,6 +6,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from .comfyui import ComfyUIProvider
 from .config import load_comfyui_workflow_registry
@@ -23,6 +24,7 @@ from .jobs import JobStore
 from .media import probe_image, probe_video
 from .providers import GenerationProvider
 from .providers import LocalCommandProvider
+from .provider_probe_receipt import PROBE_RECEIPT_SCHEMA, sign_provider_probe_receipt
 from .replicate import ReplicateVideoProvider
 from .router import ProviderRegistration, ProviderRouter
 
@@ -223,6 +225,8 @@ def run_provider_probe(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest = {
+        "schema_version": PROBE_RECEIPT_SCHEMA,
+        "receipt_id": f"provider_probe_{uuid4().hex}",
         "status": "SUCCEEDED",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "provider": provider.name,
@@ -247,6 +251,12 @@ def run_provider_probe(
         "artifact": artifact.model_dump(mode="json"),
         "quality": quality,
     }
+    receipt_secret = os.getenv("MEDIAFORGE_PROVIDER_PROBE_RECEIPT_SECRET", "").strip()
+    if receipt_secret:
+        manifest["receipt_signature"] = sign_provider_probe_receipt(
+            manifest,
+            receipt_secret,
+        )
     manifest_path = output_dir / "manifest.json"
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=True, indent=2),

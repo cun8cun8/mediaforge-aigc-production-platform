@@ -17,7 +17,7 @@ This checklist is the deployment decision record for MediaForge. A green CI run 
 - [ ] ComfyUI workflow registry entries have version, SHA-256 and approved model inventory.
 - [ ] Cloud model versions are explicitly pinned; budget estimates and usage limits are reviewed.
 - [ ] `MEDIAFORGE_CALLBACK_SECRET` is present and the callback max-age policy is appropriate.
-- [ ] A real Provider Probe was approved for cost and produced a valid artifact receipt.
+- [ ] A real Provider Probe was approved for cost and produced a recent signed artifact receipt for every enabled real Provider.
 - [ ] At least one Worker per enabled local Provider has healthy heartbeat, capability match and GPU admission.
 - [ ] Failed Provider execution, stale lease recovery and manual retry were exercised in staging.
 
@@ -71,6 +71,8 @@ mediaforge-production-acceptance `
   --token $env:MEDIAFORGE_READINESS_TOKEN `
   --probe-enterprise `
   --probe-planning `
+  --provider-probe-receipt artifacts/provider-probe/manifest.json `
+  --provider-probe-secret-file ops/secrets/provider-probe-receipt-secret `
   --require-production
 ```
 

@@ -106,6 +106,35 @@ POST /projects/{project_id}/jobs/{job_id}/callback
 
 The signature covers timestamp, HTTP method, request path and raw JSON body. Workers can use the built-in callback implementation in `mediaforge_p1.worker`; custom integrations must use the same canonical algorithm. Check configuration with `GET /providers/callback-security`.
 
+## Provider Probe Evidence
+
+A real Provider Probe is an explicit, cost-bearing release activity. It never
+runs as part of API acceptance or CI. Set a separate secret-manager value before
+running an approved probe:
+
+```powershell
+$env:MEDIAFORGE_PROVIDER_PROBE_RECEIPT_SECRET = Get-Content ops/secrets/provider-probe-receipt-secret -Raw
+mediaforge-provider-probe --provider comfyui --registry D:\secure-config\comfyui-workflow-registry.json --template-id comfyui_image:reviewed:v1 --require-workflow-pin --output artifacts/provider-probe-comfyui
+```
+
+The generated `manifest.json` is a `mediaforge-provider-probe-receipt-v1`
+receipt. It contains the successful execution metadata, artifact SHA-256 and
+quality result, signed with HMAC-SHA256. The secret itself is never written into
+the receipt. For a strict release decision, pass one recent receipt for each
+enabled real Provider along with a protected secret file:
+
+```powershell
+mediaforge-production-acceptance `
+  --base-url https://staging.example.com `
+  --token $env:MEDIAFORGE_READINESS_TOKEN `
+  --provider-probe-receipt artifacts/provider-probe-comfyui/manifest.json `
+  --provider-probe-secret-file ops/secrets/provider-probe-receipt-secret `
+  --require-production
+```
+
+`MEDIAFORGE_PROVIDER_PROBE_MAX_AGE_HOURS` defaults to `168`. Receipt paths,
+artifact paths and secret values are excluded from the acceptance report.
+
 ## Production Runtime Profile
 
 The following is a minimum target, not a copy-and-paste credentials file:

@@ -186,6 +186,14 @@ records the selected workflow version, SHA-256, output artifact and quality
 gate result. Do not run it from CI or before a cost owner has approved the
 workflow and model inventory.
 
+For a production release, set `MEDIAFORGE_PROVIDER_PROBE_RECEIPT_SECRET` from
+the deployment secret manager before running the probe. The command then writes
+an HMAC-SHA256 signed `mediaforge-provider-probe-receipt-v1` manifest. Pass that
+manifest and the same secret through a protected file to
+`mediaforge-production-acceptance --require-production`; the acceptance command
+checks its signature, age, artifact hash and quality result without generating
+another asset.
+
 For a reviewed video graph, record the tested capability explicitly:
 
 ```powershell
