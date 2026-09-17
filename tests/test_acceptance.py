@@ -4,6 +4,7 @@ import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from mediaforge_p1 import acceptance
 from mediaforge_p1.acceptance import run_production_acceptance, write_report
 
 
@@ -44,6 +45,14 @@ def test_production_acceptance_is_non_destructive_and_can_require_production(
                     "ready": True,
                     "production_ready": False,
                     "api_key": "must-not-appear-in-report",
+                },
+                "/providers/contracts": {
+                    "provider_count": 1,
+                    "summary": {
+                        "protocol_passed": True,
+                        "planned_shot_count": 0,
+                        "unroutable_shot_count": 0,
+                    },
                 },
                 "/source-ingest/status": {
                     "configured": False,
@@ -92,6 +101,8 @@ def test_production_acceptance_is_non_destructive_and_can_require_production(
         assert {item["code"] for item in report["checks"]} >= {
             "health",
             "provider_diagnostics",
+            "provider_callback_security",
+            "provider_contract",
             "source_ingest",
             "planning_status",
             "enterprise_status",
@@ -123,3 +134,84 @@ def test_production_acceptance_is_non_destructive_and_can_require_production(
         server.shutdown()
         thread.join(timeout=5)
         server.server_close()
+
+
+def test_strict_acceptance_blocks_incomplete_comfyui_governance(monkeypatch) -> None:
+    payloads = {
+        "/health": {"status": "ok"},
+        "/providers/diagnostics": {
+            "grade": "READY",
+            "ready": True,
+            "production_ready": True,
+            "callback_security": {"configured": False},
+            "status": {
+                "mode": "comfyui",
+                "provider": "comfyui",
+                "configured": True,
+                "capabilities": ["image_generation", "image_to_video"],
+                "details": {
+                    "workflow_loaded": True,
+                    "workflow_pin_required": False,
+                    "workflow_registry": {
+                        "workflows": [
+                            {
+                                "version": "2026.09.17",
+                                "sha256": "a" * 64,
+                                "source_path": "must-not-appear-in-report.json",
+                            }
+                        ]
+                    },
+                    "default_template_id": "comfyui_image:reviewed:v1",
+                    "default_video_template_id": None,
+                },
+            },
+        },
+        "/providers/contracts": {
+            "provider_count": 1,
+            "summary": {
+                "protocol_passed": True,
+                "planned_shot_count": 0,
+                "unroutable_shot_count": 0,
+            },
+        },
+        "/source-ingest/status": {"configuration_error": None},
+        "/planning/status": {},
+        "/enterprise/status": {},
+        "/ops/readiness": {
+            "ready": True,
+            "production_ready": True,
+            "grade": "READY",
+            "blocking_failures": [],
+            "warnings": [],
+        },
+        "/ops/alerts": {"critical_count": 0, "warning_count": 0},
+    }
+
+    def fake_fetch_json(_base_url, path, **_kwargs):
+        return payloads[path]
+
+    monkeypatch.setattr(acceptance, "fetch_json", fake_fetch_json)
+
+    report = acceptance.run_production_acceptance(
+        "https://staging.example.com",
+        require_production=True,
+    )
+
+    assert report["passed"] is False
+    assert report["blocking_failures"] == [
+        "provider_callback_security",
+        "comfyui_workflow_governance",
+    ]
+    checks = {item["code"]: item for item in report["checks"]}
+    assert checks["comfyui_workflow_governance"]["detail"]["providers"] == [
+        {
+            "provider": "comfyui",
+            "workflow_loaded": True,
+            "workflow_pin_required": False,
+            "reviewed_registry": True,
+            "reviewed_legacy_workflow": False,
+            "capabilities": ["image_generation", "image_to_video"],
+            "missing_default_capabilities": ["image_to_video"],
+        }
+    ]
+    assert "must-not-appear-in-report" not in json.dumps(report)

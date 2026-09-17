@@ -111,6 +111,118 @@ def run_production_acceptance(
                 },
             )
         )
+        status_payload = diagnostics.get("status")
+        status_rows = (
+            status_payload.get("providers") or [status_payload]
+            if isinstance(status_payload, dict)
+            else []
+        )
+        real_providers = [
+            row
+            for row in status_rows
+            if isinstance(row, dict)
+            and str(row.get("mode") or "").strip().lower()
+            not in {"", "mock", "unknown"}
+        ]
+        callback_security = diagnostics.get("callback_security") or {}
+        callback_configured = bool(callback_security.get("configured"))
+        checks.append(
+            _check(
+                "provider_callback_security",
+                not real_providers or callback_configured,
+                require_production and bool(real_providers),
+                "Callback signing is configured for real Providers."
+                if not real_providers or callback_configured
+                else "Real Providers require signed callback configuration.",
+                {
+                    "real_provider_count": len(real_providers),
+                    "configured": callback_configured,
+                },
+            )
+        )
+        comfy_rows = [
+            row
+            for row in real_providers
+            if str(row.get("mode") or "").strip().lower() == "comfyui"
+        ]
+        if comfy_rows:
+            governance_rows = []
+            for row in comfy_rows:
+                details = row.get("details") or {}
+                capabilities = {
+                    str(item)
+                    for item in row.get("capabilities") or []
+                    if str(item).strip()
+                }
+                registry = details.get("workflow_registry") or {}
+                registry_rows = registry.get("workflows") if isinstance(registry, dict) else []
+                reviewed_entries = bool(registry_rows) and all(
+                    isinstance(item, dict)
+                    and bool(item.get("version"))
+                    and len(str(item.get("sha256") or "")) == 64
+                    for item in registry_rows
+                )
+                legacy_workflow = details.get("workflow") or {}
+                reviewed_legacy = (
+                    isinstance(legacy_workflow, dict)
+                    and bool(legacy_workflow.get("version"))
+                    and len(str(legacy_workflow.get("sha256") or "")) == 64
+                )
+                missing_defaults = []
+                if "image_generation" in capabilities and not details.get("default_template_id"):
+                    missing_defaults.append("image_generation")
+                if "image_to_video" in capabilities and not details.get("default_video_template_id"):
+                    missing_defaults.append("image_to_video")
+                governance_rows.append(
+                    {
+                        "provider": str(row.get("provider") or "comfyui"),
+                        "workflow_loaded": bool(details.get("workflow_loaded")),
+                        "workflow_pin_required": bool(details.get("workflow_pin_required")),
+                        "reviewed_registry": reviewed_entries,
+                        "reviewed_legacy_workflow": reviewed_legacy,
+                        "capabilities": sorted(capabilities),
+                        "missing_default_capabilities": missing_defaults,
+                    }
+                )
+            governance_passed = all(
+                item["workflow_loaded"]
+                and item["workflow_pin_required"]
+                and (item["reviewed_registry"] or item["reviewed_legacy_workflow"])
+                and not item["missing_default_capabilities"]
+                for item in governance_rows
+            )
+            checks.append(
+                _check(
+                    "comfyui_workflow_governance",
+                    governance_passed,
+                    require_production,
+                    "Reviewed ComfyUI workflow governance is complete."
+                    if governance_passed
+                    else "ComfyUI workflow pins, reviewed entries, or capability defaults are incomplete.",
+                    {"providers": governance_rows},
+                )
+            )
+
+    provider_contract = get("provider_contract", "/providers/contracts")
+    if provider_contract is not None:
+        summary = provider_contract.get("summary") or {}
+        protocol_passed = bool(summary.get("protocol_passed"))
+        checks.append(
+            _check(
+                "provider_contract",
+                protocol_passed,
+                True,
+                "Enabled Provider protocol contracts passed."
+                if protocol_passed
+                else "At least one enabled Provider protocol contract failed.",
+                {
+                    "provider_count": int(provider_contract.get("provider_count") or 0),
+                    "protocol_passed": protocol_passed,
+                    "planned_shot_count": int(summary.get("planned_shot_count") or 0),
+                    "unroutable_shot_count": int(summary.get("unroutable_shot_count") or 0),
+                },
+            )
+        )
 
     source_ingest = get("source_ingest", "/source-ingest/status")
     if source_ingest is not None:

@@ -13,6 +13,7 @@ This checklist is the deployment decision record for MediaForge. A green CI run 
 ## 2. Provider And GPU Validation
 
 - [ ] Each enabled Provider is `READY` in `/providers/diagnostics`.
+- [ ] `mediaforge-production-acceptance --require-production` reports passing Provider contracts, callback signing and ComfyUI workflow governance.
 - [ ] ComfyUI workflow registry entries have version, SHA-256 and approved model inventory.
 - [ ] Cloud model versions are explicitly pinned; budget estimates and usage limits are reviewed.
 - [ ] `MEDIAFORGE_CALLBACK_SECRET` is present and the callback max-age policy is appropriate.
