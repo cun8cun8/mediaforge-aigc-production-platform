@@ -3188,6 +3188,8 @@ def test_studio_static_assets_are_served(tmp_path: Path, monkeypatch) -> None:
     assert "审计记录" in html.text
     assert script.status_code == 200
     assert "submit-all" in script.text
+    assert "isMockPreview" in script.text
+    assert "模拟预览" in script.text
     assert "/studio/overview" in script.text
     assert "/studio/metrics" in script.text
     assert "/governance/license-registry/validate" in script.text
@@ -3292,6 +3294,7 @@ def test_studio_static_assets_are_served(tmp_path: Path, monkeypatch) -> None:
     assert "job-row" in styles.text
     assert "asset-row" in styles.text
     assert "variant-actions" in styles.text
+    assert "media-simulation-badge" in styles.text
     assert "policy-row" in styles.text
     assert "registry-summary" in styles.text
 

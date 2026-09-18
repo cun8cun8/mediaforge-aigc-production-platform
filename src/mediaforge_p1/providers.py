@@ -10,10 +10,14 @@ from typing import Protocol
 from time import perf_counter
 from uuid import uuid4
 
-from PIL import Image, ImageDraw
-
 from .contracts import Artifact, Capability, GenerationSpec
-from .media import create_preview_video, probe_image, probe_video, sha256_file
+from .media import (
+    create_preview_image,
+    create_preview_video,
+    probe_image,
+    probe_video,
+    sha256_file,
+)
 
 
 class GenerationProvider(Protocol):
@@ -150,7 +154,15 @@ class MockProvider:
         artifact_id = f"artifact_{uuid4().hex[:12]}"
         if capability == Capability.IMAGE_GENERATION:
             path = output_dir / f"{artifact_id}.png"
-            self._create_image(path, spec)
+            create_preview_image(
+                path,
+                color=self._color_for(spec.shot_id),
+                title=f"{spec.project_id} / {spec.shot_id}",
+                subtitle=(
+                    f"{spec.intent.shot_type} / {spec.intent.camera_motion} / "
+                    f"{spec.intent.mood}"
+                ),
+            )
             kind = "image"
             mime_type = "image/png"
             duration = None
@@ -179,6 +191,11 @@ class MockProvider:
                     "provider": self.name,
                     "job_id": job_id,
                     "spec": spec.model_dump(mode="json"),
+                    "simulation": {
+                        "mode": "mock",
+                        "visible_preview": True,
+                        "message": "Workflow validation only; not real model output.",
+                    },
                 },
                 ensure_ascii=True,
                 indent=2,
@@ -202,14 +219,3 @@ class MockProvider:
     def _color_for(shot_id: str) -> str:
         colors = ["#1d3557", "#457b9d", "#e76f51", "#2a9d8f", "#6d597a"]
         return colors[sum(ord(char) for char in shot_id) % len(colors)]
-
-    @staticmethod
-    def _create_image(path: Path, spec: GenerationSpec) -> None:
-        image = Image.new("RGB", (640, 360), "#1d3557")
-        draw = ImageDraw.Draw(image)
-        draw.text(
-            (24, 24),
-            f"{spec.project_id} / {spec.shot_id}",
-            fill="#f1faee",
-        )
-        image.save(path, format="PNG")

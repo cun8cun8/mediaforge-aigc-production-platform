@@ -259,6 +259,7 @@ def test_mock_provider_creates_a_probeable_video(tmp_path: Path) -> None:
     assert metadata["schema_version"] == "mediaforge-artifact-metadata-v1"
     assert metadata["provider"] == "mock-provider"
     assert metadata["job_id"] == "job_test"
+    assert metadata["simulation"]["visible_preview"] is True
     assert result.valid is True
     assert result.width == 640
     assert result.height == 360
@@ -271,6 +272,22 @@ def test_mock_provider_creates_a_probeable_video(tmp_path: Path) -> None:
     with Image.open(frame_path) as frame:
         colors = frame.convert("RGB").getcolors(maxcolors=640 * 360)
     assert colors is not None and len(colors) > 8
+
+
+def test_mock_provider_creates_a_visible_preview_image(tmp_path: Path) -> None:
+    artifact = MockProvider().generate(
+        make_spec(capability=Capability.IMAGE_GENERATION),
+        job_id="job_image",
+        output_dir=tmp_path,
+    )
+
+    assert artifact.kind == "image"
+    assert probe_image(Path(artifact.uri)).valid is True
+    with Image.open(artifact.uri) as image:
+        colors = image.convert("RGB").getcolors(maxcolors=640 * 360)
+    assert colors is not None and len(colors) > 8
+    metadata = json.loads(Path(artifact.metadata_uri).read_text(encoding="utf-8"))
+    assert metadata["simulation"]["mode"] == "mock"
 
 
 def test_probe_image_and_image_quality_report(tmp_path: Path) -> None:

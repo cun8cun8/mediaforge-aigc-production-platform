@@ -94,20 +94,16 @@ def create_placeholder_video(
     return output_path
 
 
-def create_preview_video(
+def create_preview_image(
     output_path: Path,
     *,
-    duration_seconds: float,
     color: str,
     title: str,
     subtitle: str = "",
     size: tuple[int, int] = (640, 360),
 ) -> Path:
-    """Create a visible, clearly-labelled preview clip for local Mock runs."""
-    if duration_seconds <= 0:
-        raise ValueError("preview duration_seconds must be > 0")
+    """Create a visible, clearly-labelled image preview for local Mock runs."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    preview_image = output_path.with_suffix(".preview.png")
     width, height = size
     safe_title = str(title).encode("ascii", errors="replace").decode("ascii")
     safe_subtitle = str(subtitle).encode("ascii", errors="replace").decode("ascii")
@@ -128,7 +124,31 @@ def create_preview_video(
         draw.text((48, 154), safe_subtitle[:96], fill="#dbeafe")
     draw.text((48, height - 76), "FLOW VALIDATION / NOT REAL MODEL OUTPUT", fill="#f1faee")
     draw.ellipse((width - 100, 76, width - 54, 122), fill="#e76f51", outline="#ffffff", width=2)
-    image.save(preview_image, format="PNG")
+    image.save(output_path, format="PNG")
+    return output_path
+
+
+def create_preview_video(
+    output_path: Path,
+    *,
+    duration_seconds: float,
+    color: str,
+    title: str,
+    subtitle: str = "",
+    size: tuple[int, int] = (640, 360),
+) -> Path:
+    """Create a visible, clearly-labelled preview clip for local Mock runs."""
+    if duration_seconds <= 0:
+        raise ValueError("preview duration_seconds must be > 0")
+    preview_image = output_path.with_suffix(".preview.png")
+    width, height = size
+    create_preview_image(
+        preview_image,
+        color=color,
+        title=title,
+        subtitle=subtitle,
+        size=size,
+    )
     try:
         return create_video_from_image(
             preview_image,

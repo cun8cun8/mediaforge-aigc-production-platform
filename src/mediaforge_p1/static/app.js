@@ -1031,6 +1031,10 @@ function artifactUrl(projectId, uri) {
   return `/projects/${encodeURIComponent(projectId)}/media/${normalized.slice(markerIndex + marker.length)}`;
 }
 
+function isMockPreview(runtime) {
+  return Boolean(runtime?.artifact && runtime.route?.provider === "mock-provider");
+}
+
 function normalizeProjectSummary(project) {
   return {
     project_id: project.project_id,
@@ -3344,6 +3348,7 @@ function renderShot(runtime) {
   const queued = !runtime.artifact && ["VALIDATED", "QUEUED", "ADMITTED"].includes(jobStatus);
   const archived = Boolean(state.project?.archived);
   const variantCount = (runtime.variants || []).length;
+  const simulated = isMockPreview(runtime);
   const statusLabel = status === "APPROVED" ? "已通过" : (
     status === "CHANGES_REQUESTED" ? "需修改" : (
       runtime.artifact ? "待审核" : (
@@ -3383,7 +3388,7 @@ function renderShot(runtime) {
     <article class="shot-card ${selected ? "is-selected" : ""} ${status === "APPROVED" ? "is-ready" : ""} ${status === "CHANGES_REQUESTED" ? "is-changes" : ""}" data-shot-card="${shot.shot_id}">
       <div class="shot-index">${String(shot.shot_id).split("_").pop()}</div>
       <div class="shot-copy" data-action="select" data-shot-id="${shot.shot_id}">
-        <div class="shot-title-row"><span class="shot-title">${escapeHtml(shot.scene)}</span><span class="revision-label">R${runtime.revision}${variantCount ? ` · ${variantCount}V` : ""}</span></div>
+        <div class="shot-title-row"><span class="shot-title">${escapeHtml(shot.scene)}</span><span class="revision-label">R${runtime.revision}${variantCount ? ` · ${variantCount}V` : ""}</span>${simulated ? '<span class="simulation-badge">模拟预览</span>' : ""}</div>
         <div class="shot-meta">${escapeHtml(shot.description)} · ${shot.duration_seconds}s</div>
         <div class="shot-status ${status === "APPROVED" ? "approved" : ""} ${status === "CHANGES_REQUESTED" ? "changes" : ""}">${statusLabel}</div>
       </div>
@@ -3408,7 +3413,10 @@ function renderInspector() {
   $("inspectorRevision").textContent = `R${runtime.revision}`;
   $("inspectorScene").textContent = runtime.shot.scene;
   $("inspectorMotion").textContent = motionLabel(runtime.spec.intent.camera_motion);
-  $("inspectorProvider").textContent = runtime.route?.provider || (runtime.artifact ? "未知" : "未执行");
+  const simulated = isMockPreview(runtime);
+  $("inspectorProvider").textContent = simulated
+    ? "模拟服务商（预览）"
+    : (runtime.route?.provider || (runtime.artifact ? "未知" : "未执行"));
   $("inspectorQuality").textContent = runtime.quality
     ? (runtime.quality.passed ? "已通过" : "未通过")
     : "待检查";
@@ -3420,9 +3428,9 @@ function renderInspector() {
   if (runtime.artifact) {
     const url = artifactUrl(state.project.project_id, runtime.artifact.uri);
     if (runtime.artifact.kind === "image") {
-      media.innerHTML = `<img alt="${escapeHtml(runtime.shot.shot_id)}" loading="lazy" src="${url}">`;
+      media.innerHTML = `<img alt="${escapeHtml(runtime.shot.shot_id)}" loading="lazy" src="${url}">${simulated ? '<span class="media-simulation-badge">模拟预览</span>' : ""}`;
     } else {
-      media.innerHTML = `<video controls preload="metadata" src="${url}"></video>`;
+      media.innerHTML = `<video controls preload="metadata" src="${url}"></video>${simulated ? '<span class="media-simulation-badge">模拟预览</span>' : ""}`;
     }
   } else {
     media.innerHTML = `<div class="media-placeholder">暂无媒体产物</div>`;
