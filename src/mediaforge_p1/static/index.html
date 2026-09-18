@@ -1272,6 +1272,34 @@
             <button id="verifyArchiveButton" class="button button-quiet" type="button" disabled>
               验证归档 <span aria-hidden="true">✓</span>
             </button>
+            <div class="delivery-feedback-block">
+              <div class="panel-heading">
+                <span class="eyebrow">交付反馈</span>
+                <span id="deliveryFeedbackStatus" class="mini-label">暂无反馈</span>
+              </div>
+              <div class="job-summary delivery-feedback-summary">
+                <div><span>待处理</span><strong id="deliveryFeedbackOpen">0</strong></div>
+                <div><span>阻断</span><strong id="deliveryFeedbackBlockers">0</strong></div>
+                <div><span>已解决</span><strong id="deliveryFeedbackResolved">0</strong></div>
+              </div>
+              <div class="delivery-feedback-editor">
+                <select id="deliveryFeedbackTarget" aria-label="反馈对象"></select>
+                <select id="deliveryFeedbackCategory" aria-label="反馈类别">
+                  <option value="visual">画面</option><option value="story">剧情</option><option value="audio">声音</option><option value="continuity">连续性</option><option value="timing">节奏</option><option value="brand">品牌</option><option value="other">其他</option>
+                </select>
+                <select id="deliveryFeedbackSeverity" aria-label="反馈优先级">
+                  <option value="NORMAL">一般</option><option value="LOW">低</option><option value="HIGH">高</option><option value="BLOCKER">阻断</option>
+                </select>
+                <select id="deliveryFeedbackVerdict" aria-label="反馈结论">
+                  <option value="REQUEST_CHANGES">需要修改</option><option value="QUESTION">待澄清</option><option value="APPROVE">认可</option>
+                </select>
+                <input id="deliveryFeedbackRating" type="number" min="1" max="5" step="1" placeholder="评分 1-5" aria-label="反馈评分" />
+                <input id="deliveryFeedbackAssignee" type="text" maxlength="160" placeholder="负责人" aria-label="反馈负责人" />
+                <textarea id="deliveryFeedbackComment" rows="3" maxlength="4000" placeholder="交付反馈" aria-label="交付反馈内容"></textarea>
+                <button id="deliveryFeedbackButton" class="button button-secondary" type="button" disabled>提交反馈</button>
+              </div>
+              <div id="deliveryFeedbackList" class="delivery-feedback-list"></div>
+            </div>
             <a id="downloadLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开最终 MP4</a>
             <a id="subtitleLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开字幕 SRT</a>
             <a id="audioLink" class="download-link" href="#" target="_blank" rel="noreferrer" hidden>打开项目音频轨</a>

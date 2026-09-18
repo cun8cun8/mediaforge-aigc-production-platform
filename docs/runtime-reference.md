@@ -231,6 +231,9 @@ GET  /projects/{id}/continuity
 POST /projects/{id}/continuity/export
 GET  /projects/{id}/distribution
 POST /projects/{id}/distribution/export
+GET  /projects/{id}/delivery-feedback?delivery_id=
+POST /projects/{id}/delivery-feedback
+PATCH /projects/{id}/delivery-feedback/{feedback_id}
 POST /projects/{id}/deliveries/{delivery_id}/acknowledge
 GET  /projects/{id}/acceptance
 POST /projects/{id}/acceptance/export

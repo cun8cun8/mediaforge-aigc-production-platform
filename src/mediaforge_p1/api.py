@@ -124,6 +124,32 @@ class DeliveryAcknowledgeRequest(BaseModel):
     actor: str = Field(default="delivery-recipient", min_length=1, max_length=120)
 
 
+class DeliveryFeedbackRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    delivery_id: str = Field(min_length=1, max_length=160)
+    target_type: Literal["project", "shot"] = "project"
+    target_id: str | None = Field(default=None, max_length=160)
+    category: Literal[
+        "story", "visual", "audio", "continuity", "timing", "brand", "other"
+    ] = "other"
+    severity: Literal["LOW", "NORMAL", "HIGH", "BLOCKER"] = "NORMAL"
+    verdict: Literal["APPROVE", "REQUEST_CHANGES", "QUESTION"] = "REQUEST_CHANGES"
+    comment: str = Field(min_length=1, max_length=4_000)
+    rating: float | None = Field(default=None, ge=1, le=5, allow_inf_nan=False)
+    assignee: str | None = Field(default=None, max_length=160)
+    actor: str = Field(default="delivery-recipient", min_length=1, max_length=120)
+
+
+class DeliveryFeedbackTriageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["ACKNOWLEDGED", "RESOLVED", "DISMISSED"]
+    resolution: str = Field(default="", max_length=4_000)
+    assignee: str | None = Field(default=None, max_length=160)
+    actor: str = Field(default="delivery-owner", min_length=1, max_length=120)
+
+
 class CloneRequest(BaseModel):
     project_id: str = Field(
         min_length=1,
@@ -3485,6 +3511,64 @@ def create_app(output_root: Path | None = None) -> FastAPI:
         except ProjectNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except DeliveryNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except WorkflowError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/projects/{project_id}/delivery-feedback")
+    def get_delivery_feedback(
+        project_id: str,
+        delivery_id: str | None = Query(default=None, max_length=160),
+    ) -> dict:
+        try:
+            return service.delivery_feedback_report(project_id, delivery_id=delivery_id)
+        except ProjectNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except DeliveryNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/projects/{project_id}/delivery-feedback", status_code=status.HTTP_201_CREATED)
+    def create_delivery_feedback(
+        project_id: str,
+        request: DeliveryFeedbackRequest,
+    ) -> dict:
+        try:
+            return service.submit_delivery_feedback(
+                project_id,
+                delivery_id=request.delivery_id,
+                target_type=request.target_type,
+                target_id=request.target_id,
+                category=request.category,
+                severity=request.severity,
+                verdict=request.verdict,
+                comment=request.comment,
+                rating=request.rating,
+                assignee=request.assignee,
+                actor=request.actor,
+            )
+        except ProjectNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except DeliveryNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (WorkflowError, ShotNotFound) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.patch("/projects/{project_id}/delivery-feedback/{feedback_id}")
+    def triage_delivery_feedback(
+        project_id: str,
+        feedback_id: str,
+        request: DeliveryFeedbackTriageRequest,
+    ) -> dict:
+        try:
+            return service.triage_delivery_feedback(
+                project_id,
+                feedback_id,
+                status=request.status,
+                resolution=request.resolution,
+                assignee=request.assignee,
+                actor=request.actor,
+            )
+        except ProjectNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except WorkflowError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

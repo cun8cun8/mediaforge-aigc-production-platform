@@ -221,6 +221,7 @@ class ProjectRuntime:
     provider_benchmarks: list[dict[str, Any]] = field(default_factory=list)
     comparison_reports: list[dict[str, Any]] = field(default_factory=list)
     deliveries: list[dict[str, Any]] = field(default_factory=list)
+    delivery_feedback: list[dict[str, Any]] = field(default_factory=list)
     reference_assets: list[dict[str, Any]] = field(default_factory=list)
     members: list[dict[str, Any]] = field(default_factory=list)
     comments: list[dict[str, Any]] = field(default_factory=list)
@@ -5041,6 +5042,7 @@ class MediaForgeService:
             ),
             experiments=copy.deepcopy(record.get("experiments", [])),
             evaluation_baselines=copy.deepcopy(record.get("evaluation_baselines", [])),
+            delivery_feedback=copy.deepcopy(record.get("delivery_feedback", [])),
             members=[
                 {
                     "subject": actor.strip() or "studio-user",
@@ -6041,6 +6043,7 @@ class MediaForgeService:
             for status in JobStatus
         }
         accepted_deliveries = distribution["summary"]["accepted_count"]
+        feedback_summary = self._delivery_feedback_summary(project.delivery_feedback)
         final_duration = (
             probe_video(Path(project.final_mp4)).duration_seconds
             if project.final_mp4 and Path(project.final_mp4).is_file()
@@ -6216,6 +6219,20 @@ class MediaForgeService:
                 "Accepted delivery has not been closed out.",
                 "Run closeout and archive packaging after recipient acceptance.",
             )
+        if feedback_summary["blocking_open_count"]:
+            add_insight(
+                "delivery_feedback",
+                "critical",
+                f"{feedback_summary['blocking_open_count']} blocking delivery feedback item(s) remain open.",
+                "Resolve blocker feedback and record the resolution before creating the next release branch.",
+            )
+        elif feedback_summary["unresolved_count"]:
+            add_insight(
+                "delivery_feedback",
+                "warning",
+                f"{feedback_summary['unresolved_count']} delivery feedback item(s) still need a disposition.",
+                "Assign and triage delivery feedback so recipient input enters the next production cycle.",
+            )
 
         return {
             "schema_version": "mediaforge-retrospective-v1",
@@ -6299,6 +6316,7 @@ class MediaForgeService:
                         if archive_verified
                         else None
                     ),
+                    "feedback": feedback_summary,
                 },
                 "governance": {
                     "policy_passed": policy["passed"],
@@ -6392,6 +6410,7 @@ class MediaForgeService:
             "ready": dataset_path.is_file() and manifest_path.is_file(),
             "eligible_record_count": eligible,
             "record_count": self._dataset_record_count(manifest_path),
+            "delivery_feedback": self._delivery_feedback_summary(project.delivery_feedback),
             "dataset_path": str(dataset_path) if dataset_path.is_file() else None,
             "manifest_path": str(manifest_path) if manifest_path.is_file() else None,
         }
@@ -6405,6 +6424,21 @@ class MediaForgeService:
         """Export reviewed production evidence as JSONL for evaluation or training."""
         project = self._project(project_id)
         records: list[dict[str, Any]] = []
+        feedback_by_target: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for feedback in project.delivery_feedback:
+            target_key = (
+                str(feedback.get("target_type") or "project"),
+                str(feedback.get("target_id") or project_id),
+            )
+            feedback_by_target.setdefault(target_key, []).append(
+                {
+                    key: feedback.get(key)
+                    for key in (
+                        "feedback_id", "delivery_id", "category", "severity", "verdict",
+                        "rating", "comment", "status", "resolution", "submitted_at", "resolved_at",
+                    )
+                }
+            )
         project_split = "validation" if int(hashlib.sha256(project_id.encode("utf-8")).hexdigest()[:2], 16) < 51 else "train"
         for runtime in project.shots.values():
             artifact = runtime.current_artifact
@@ -6449,6 +6483,10 @@ class MediaForgeService:
                     }
                     for review in runtime.reviews
                 ],
+                "stakeholder_feedback": [
+                    *feedback_by_target.get(("project", project_id), []),
+                    *feedback_by_target.get(("shot", runtime.shot.shot_id), []),
+                ],
                 "license_evidence": [
                     {"asset_id": ref.asset_id, "license": ref.license, "source": ref.source}
                     for ref in runtime.spec.reference_assets
@@ -6470,6 +6508,7 @@ class MediaForgeService:
             "split": project_split,
             "source": "approved-current-artifacts",
             "dataset_path": str(dataset_path),
+            "delivery_feedback": self._delivery_feedback_summary(project.delivery_feedback),
         }
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=True, indent=2), encoding="utf-8")
         self._record_event(
@@ -7085,6 +7124,7 @@ class MediaForgeService:
     def distribution_report(self, project_id: str) -> dict[str, Any]:
         project = self._project(project_id)
         deliveries = copy.deepcopy(project.deliveries)
+        feedback = copy.deepcopy(project.delivery_feedback)
         latest = deliveries[-1] if deliveries else None
         summary = self._delivery_summary(deliveries)
         return {
@@ -7104,6 +7144,10 @@ class MediaForgeService:
             ),
             "latest": latest,
             "deliveries": deliveries,
+            "feedback": {
+                "summary": self._delivery_feedback_summary(feedback),
+                "items": feedback,
+            },
         }
 
     def export_distribution_report(
@@ -7410,6 +7454,183 @@ class MediaForgeService:
             "receipt_path": str(receipt_path),
             "distribution_report": str(distribution_path),
             "distribution": distribution,
+        }
+
+    def delivery_feedback_report(
+        self,
+        project_id: str,
+        *,
+        delivery_id: str | None = None,
+    ) -> dict[str, Any]:
+        project = self._project(project_id)
+        clean_delivery_id = str(delivery_id or "").strip()
+        if clean_delivery_id:
+            self._delivery_record(project, clean_delivery_id)
+        items = [
+            copy.deepcopy(item)
+            for item in project.delivery_feedback
+            if not clean_delivery_id or item.get("delivery_id") == clean_delivery_id
+        ]
+        items.sort(key=lambda item: str(item.get("submitted_at") or ""), reverse=True)
+        return {
+            "schema_version": "mediaforge-delivery-feedback-v1",
+            "project_id": project_id,
+            "delivery_id": clean_delivery_id or None,
+            "summary": self._delivery_feedback_summary(items),
+            "items": items,
+        }
+
+    def submit_delivery_feedback(
+        self,
+        project_id: str,
+        *,
+        delivery_id: str,
+        target_type: str = "project",
+        target_id: str | None = None,
+        category: str = "other",
+        severity: str = "NORMAL",
+        verdict: str = "REQUEST_CHANGES",
+        comment: str,
+        rating: float | None = None,
+        assignee: str | None = None,
+        actor: str = "delivery-recipient",
+    ) -> dict[str, Any]:
+        project = self._project(project_id)
+        self._ensure_active(project)
+        delivery = self._delivery_record(project, str(delivery_id or "").strip())
+        clean_type = str(target_type or "").strip().lower()
+        clean_target = str(target_id or "").strip()
+        if clean_type not in {"project", "shot"}:
+            raise WorkflowError("delivery feedback target_type must be project or shot")
+        if clean_type == "project":
+            if clean_target and clean_target != project_id:
+                raise WorkflowError("project delivery feedback target_id must match project_id")
+            clean_target = project_id
+        else:
+            if not clean_target:
+                raise WorkflowError("shot delivery feedback requires target_id")
+            self._shot(project, clean_target)
+        clean_category = str(category or "").strip().lower()
+        if clean_category not in {
+            "story", "visual", "audio", "continuity", "timing", "brand", "other"
+        }:
+            raise WorkflowError("unsupported delivery feedback category")
+        clean_severity = str(severity or "").strip().upper()
+        if clean_severity not in {"LOW", "NORMAL", "HIGH", "BLOCKER"}:
+            raise WorkflowError("delivery feedback severity must be LOW, NORMAL, HIGH, or BLOCKER")
+        clean_verdict = str(verdict or "").strip().upper()
+        if clean_verdict not in {"APPROVE", "REQUEST_CHANGES", "QUESTION"}:
+            raise WorkflowError("delivery feedback verdict must be APPROVE, REQUEST_CHANGES, or QUESTION")
+        clean_comment = str(comment or "").strip()
+        if not clean_comment or len(clean_comment) > 4_000:
+            raise WorkflowError("delivery feedback comment must contain 1 to 4000 characters")
+        if rating is not None and not 1 <= float(rating) <= 5:
+            raise WorkflowError("delivery feedback rating must be between 1 and 5")
+        clean_assignee = str(assignee or "").strip()
+        if len(clean_assignee) > 160:
+            raise WorkflowError("delivery feedback assignee must be <= 160 characters")
+        timestamp = datetime.now(timezone.utc).isoformat()
+        feedback = {
+            "feedback_id": f"feedback_{uuid4().hex[:16]}",
+            "delivery_id": delivery["delivery_id"],
+            "target_type": clean_type,
+            "target_id": clean_target,
+            "category": clean_category,
+            "severity": clean_severity,
+            "verdict": clean_verdict,
+            "rating": round(float(rating), 2) if rating is not None else None,
+            "comment": clean_comment,
+            "assignee": clean_assignee or None,
+            "status": "OPEN",
+            "submitted_by": str(actor or "delivery-recipient").strip() or "delivery-recipient",
+            "submitted_at": timestamp,
+            "updated_at": timestamp,
+            "resolution": None,
+            "resolved_by": None,
+            "resolved_at": None,
+        }
+        project.delivery_feedback.append(feedback)
+        self._record_event(
+            project,
+            action="delivery.feedback_recorded",
+            actor=feedback["submitted_by"],
+            message=f"Delivery feedback {feedback['feedback_id']} recorded.",
+            shot_id=clean_target if clean_type == "shot" else None,
+            details={
+                key: feedback[key]
+                for key in (
+                    "feedback_id", "delivery_id", "target_type", "target_id",
+                    "category", "severity", "verdict", "rating", "assignee",
+                )
+            },
+        )
+        self._persist()
+        return {
+            "project_id": project_id,
+            "feedback": copy.deepcopy(feedback),
+            "report": self.delivery_feedback_report(project_id),
+        }
+
+    def triage_delivery_feedback(
+        self,
+        project_id: str,
+        feedback_id: str,
+        *,
+        status: str,
+        resolution: str = "",
+        assignee: str | None = None,
+        actor: str = "delivery-owner",
+    ) -> dict[str, Any]:
+        project = self._project(project_id)
+        self._ensure_active(project)
+        feedback = next(
+            (item for item in project.delivery_feedback if item.get("feedback_id") == feedback_id),
+            None,
+        )
+        if feedback is None:
+            raise WorkflowError("delivery feedback was not found")
+        clean_status = str(status or "").strip().upper()
+        if clean_status not in {"ACKNOWLEDGED", "RESOLVED", "DISMISSED"}:
+            raise WorkflowError("delivery feedback status must be ACKNOWLEDGED, RESOLVED, or DISMISSED")
+        previous_status = str(feedback.get("status") or "OPEN").upper()
+        if previous_status in {"RESOLVED", "DISMISSED"} and clean_status != previous_status:
+            raise WorkflowError("closed delivery feedback cannot be reopened")
+        clean_resolution = str(resolution or "").strip()
+        if len(clean_resolution) > 4_000:
+            raise WorkflowError("delivery feedback resolution must be <= 4000 characters")
+        if clean_status in {"RESOLVED", "DISMISSED"} and not clean_resolution:
+            raise WorkflowError("closing delivery feedback requires a resolution")
+        if assignee is not None:
+            clean_assignee = str(assignee).strip()
+            if len(clean_assignee) > 160:
+                raise WorkflowError("delivery feedback assignee must be <= 160 characters")
+            feedback["assignee"] = clean_assignee or None
+        timestamp = datetime.now(timezone.utc).isoformat()
+        feedback["status"] = clean_status
+        feedback["updated_at"] = timestamp
+        if clean_resolution:
+            feedback["resolution"] = clean_resolution
+        if clean_status in {"RESOLVED", "DISMISSED"}:
+            feedback["resolved_by"] = str(actor or "delivery-owner").strip() or "delivery-owner"
+            feedback["resolved_at"] = timestamp
+        self._record_event(
+            project,
+            action="delivery.feedback_triaged",
+            actor=str(actor or "delivery-owner").strip() or "delivery-owner",
+            message=f"Delivery feedback {feedback_id} marked {clean_status}.",
+            shot_id=feedback["target_id"] if feedback.get("target_type") == "shot" else None,
+            details={
+                "feedback_id": feedback_id,
+                "previous_status": previous_status,
+                "status": clean_status,
+                "assignee": feedback.get("assignee"),
+            },
+        )
+        self._persist()
+        return {
+            "project_id": project_id,
+            "feedback": copy.deepcopy(feedback),
+            "report": self.delivery_feedback_report(project_id),
         }
 
     def project_closeout(self, project_id: str) -> dict[str, Any]:
@@ -11948,6 +12169,43 @@ class MediaForgeService:
         }
 
     @staticmethod
+    def _delivery_feedback_summary(
+        feedback: list[dict[str, Any]],
+    ) -> dict[str, int | float | None]:
+        statuses = {
+            "OPEN": 0,
+            "ACKNOWLEDGED": 0,
+            "RESOLVED": 0,
+            "DISMISSED": 0,
+        }
+        ratings = []
+        blocking_open = 0
+        change_requests_open = 0
+        for item in feedback:
+            current_status = str(item.get("status") or "OPEN").upper()
+            statuses[current_status] = statuses.get(current_status, 0) + 1
+            rating = item.get("rating")
+            if isinstance(rating, (int, float)):
+                ratings.append(float(rating))
+            is_open = current_status in {"OPEN", "ACKNOWLEDGED"}
+            if is_open and str(item.get("severity") or "").upper() == "BLOCKER":
+                blocking_open += 1
+            if is_open and str(item.get("verdict") or "").upper() == "REQUEST_CHANGES":
+                change_requests_open += 1
+        unresolved = statuses.get("OPEN", 0) + statuses.get("ACKNOWLEDGED", 0)
+        return {
+            "total_count": len(feedback),
+            "open_count": statuses.get("OPEN", 0),
+            "acknowledged_count": statuses.get("ACKNOWLEDGED", 0),
+            "resolved_count": statuses.get("RESOLVED", 0),
+            "dismissed_count": statuses.get("DISMISSED", 0),
+            "unresolved_count": unresolved,
+            "blocking_open_count": blocking_open,
+            "open_change_request_count": change_requests_open,
+            "average_rating": round(sum(ratings) / len(ratings), 3) if ratings else None,
+        }
+
+    @staticmethod
     def _delivery_receipt_payload(delivery: dict[str, Any]) -> dict[str, Any]:
         return {
             key: value
@@ -12759,6 +13017,7 @@ class MediaForgeService:
             ),
             "release": project.release,
             "delivery_count": len(project.deliveries),
+            "delivery_feedback": self._delivery_feedback_summary(project.delivery_feedback),
             "latest_delivery": (
                 project.deliveries[-1] if project.deliveries else None
             ),
@@ -12893,6 +13152,7 @@ class MediaForgeService:
             "released": project.release is not None,
             "release": project.release,
             "delivery_count": len(project.deliveries),
+            "delivery_feedback": self._delivery_feedback_summary(project.delivery_feedback),
             "latest_delivery": (
                 project.deliveries[-1] if project.deliveries else None
             ),
@@ -15519,6 +15779,7 @@ class MediaForgeService:
         # remains provenance in the package/audit files, but is not replayed.
         record["release"] = None
         record["deliveries"] = []
+        record["delivery_feedback"] = []
         record["delivery_package"] = imported_package
         record["archive_package"] = None
         record["archive_verification_report"] = None
@@ -15680,6 +15941,7 @@ class MediaForgeService:
             provider_benchmarks=copy.deepcopy(record.get("provider_benchmarks", [])),
             comparison_reports=copy.deepcopy(record.get("comparison_reports", [])),
             deliveries=copy.deepcopy(record.get("deliveries", [])),
+            delivery_feedback=copy.deepcopy(record.get("delivery_feedback", [])),
             members=copy.deepcopy(record.get("members", [])),
             comments=copy.deepcopy(record.get("comments", [])),
             prompt_versions=copy.deepcopy(record.get("prompt_versions") or default_prompt_versions()),
@@ -16115,6 +16377,7 @@ class MediaForgeService:
             "provider_benchmarks": project.provider_benchmarks,
             "comparison_reports": project.comparison_reports,
             "deliveries": project.deliveries,
+            "delivery_feedback": project.delivery_feedback,
             "shots": [
                 {
                     "shot": runtime.shot.model_dump(mode="json"),

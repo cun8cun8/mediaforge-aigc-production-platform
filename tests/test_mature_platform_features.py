@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from mediaforge_p1.api import create_app
-from mediaforge_p1.contracts import CreativeBrief
+from mediaforge_p1.contracts import CreativeBrief, ReviewStatus
 from mediaforge_p1.registry import DEFAULT_RECORDS
 from mediaforge_p1.service import MediaForgeService
 
@@ -559,3 +559,95 @@ def test_required_release_content_credentials_gate_current_final_media(
     ]
     release = service.release_project(project_id)
     assert release["release"]["status"] == "RELEASED"
+
+
+def test_delivery_feedback_closes_the_recipient_feedback_loop(tmp_path: Path) -> None:
+    service = MediaForgeService(tmp_path)
+    project_id = "delivery_feedback"
+    service.create_project(brief(project_id))
+    plan = service.generate_plan(project_id)
+    shot_id = plan["shots"][0]["shot"]["shot_id"]
+    project = service._project(project_id)
+    project.deliveries.append(
+        {
+            "delivery_id": "delivery_feedback_fixture",
+            "status": "ACCEPTED",
+            "channel": "internal-review",
+        }
+    )
+    feedback = service.submit_delivery_feedback(
+        project_id,
+        delivery_id="delivery_feedback_fixture",
+        target_type="shot",
+        target_id=shot_id,
+        category="visual",
+        severity="BLOCKER",
+        verdict="REQUEST_CHANGES",
+        rating=2,
+        comment="The character reference does not match the approved design.",
+        assignee="visual-lead",
+        actor="stakeholder@example.com",
+    )["feedback"]
+    report = service.delivery_feedback_report(project_id)
+    assert report["summary"]["blocking_open_count"] == 1
+    assert report["items"][0]["target_id"] == shot_id
+
+    with pytest.raises(ValueError, match="requires a resolution"):
+        service.triage_delivery_feedback(
+            project_id,
+            feedback["feedback_id"],
+            status="RESOLVED",
+        )
+    updated = service.triage_delivery_feedback(
+        project_id,
+        feedback["feedback_id"],
+        status="RESOLVED",
+        resolution="Regenerated from the approved reference and verified the result.",
+        actor="visual-lead",
+    )["feedback"]
+    assert updated["status"] == "RESOLVED"
+    assert service.distribution_report(project_id)["feedback"]["summary"]["resolved_count"] == 1
+    assert service.project_view(project_id)["delivery_feedback"]["unresolved_count"] == 0
+
+    service.submit_shot(project_id, shot_id)
+    service.review_shot(project_id, shot_id, status=ReviewStatus.APPROVED, comment="ready")
+    dataset = service.export_training_dataset(project_id, actor="dataset-test")
+    record = json.loads(Path(dataset["dataset_path"]).read_text(encoding="utf-8").splitlines()[0])
+    assert record["stakeholder_feedback"][0]["feedback_id"] == feedback["feedback_id"]
+    assert record["stakeholder_feedback"][0]["status"] == "RESOLVED"
+
+    restored = MediaForgeService(tmp_path)
+    assert restored.delivery_feedback_report(project_id)["summary"]["resolved_count"] == 1
+    assert any(event["action"] == "delivery.feedback_triaged" for event in restored.audit_log(project_id)["events"])
+
+
+def test_delivery_feedback_api_exposes_create_list_and_triage(tmp_path: Path) -> None:
+    app = create_app(output_root=tmp_path)
+    with TestClient(app) as client:
+        project_id = "api_delivery_feedback"
+        assert client.post("/projects", json=brief(project_id).model_dump(mode="json")).status_code == 201
+        app.state.mediaforge._project(project_id).deliveries.append(
+            {"delivery_id": "delivery_api_fixture", "status": "DELIVERED"}
+        )
+        created = client.post(
+            f"/projects/{project_id}/delivery-feedback",
+            json={
+                "delivery_id": "delivery_api_fixture",
+                "target_type": "project",
+                "category": "story",
+                "severity": "HIGH",
+                "verdict": "QUESTION",
+                "comment": "Please clarify the final act pacing.",
+            },
+        )
+        assert created.status_code == 201
+        feedback_id = created.json()["feedback"]["feedback_id"]
+        listed = client.get(f"/projects/{project_id}/delivery-feedback")
+        assert listed.status_code == 200
+        assert listed.json()["summary"]["unresolved_count"] == 1
+        triaged = client.patch(
+            f"/projects/{project_id}/delivery-feedback/{feedback_id}",
+            json={"status": "RESOLVED", "resolution": "Pacing note added to the next episode brief."},
+        )
+        assert triaged.status_code == 200
+        assert triaged.json()["feedback"]["status"] == "RESOLVED"

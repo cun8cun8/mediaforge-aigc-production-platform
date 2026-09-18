@@ -132,6 +132,26 @@ def test_local_delivery_dispatch_copies_package_and_writes_manifest(
     assert json.loads(manifest.read_text(encoding="utf-8"))["release_id"] == "release_001"
 
 
+def test_local_delivery_dispatch_uses_an_absolute_file_uri_for_relative_roots(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    package = Path("delivery.zip")
+    package.write_bytes(b"relative-package")
+
+    result = DeliveryDispatcher(Path("artifacts-relative")).dispatch(
+        package,
+        project_id="relative_project",
+        release_id="release_relative",
+        channel="archive",
+        recipient="qa",
+    )
+
+    assert result.destination_uri.startswith("file:")
+    assert Path(result.manifest_path).is_file()
+
+
 def test_operations_readiness_reports_complete_local_runtime(
     tmp_path: Path,
     monkeypatch,

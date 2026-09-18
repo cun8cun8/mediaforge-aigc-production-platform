@@ -449,6 +449,51 @@ const FIELD_LABELS = {
 const policyCategoryLabel = (value) => POLICY_CATEGORY_LABELS[String(value)] || String(value || "策略");
 const fieldLabel = (value) => FIELD_LABELS[String(value)] || String(value || "字段");
 
+const DELIVERY_FEEDBACK_LABELS = {
+  category: {
+    story: "剧情",
+    visual: "画面",
+    audio: "声音",
+    continuity: "连续性",
+    timing: "节奏",
+    brand: "品牌",
+    other: "其他",
+  },
+  severity: {
+    LOW: "低",
+    NORMAL: "一般",
+    HIGH: "高",
+    BLOCKER: "阻断",
+  },
+  verdict: {
+    APPROVE: "认可",
+    REQUEST_CHANGES: "需要修改",
+    QUESTION: "待澄清",
+  },
+  status: {
+    OPEN: "待处理",
+    ACKNOWLEDGED: "已确认",
+    RESOLVED: "已解决",
+    DISMISSED: "不采纳",
+  },
+};
+
+const deliveryFeedbackLabel = (type, value) => (
+  DELIVERY_FEEDBACK_LABELS[type]?.[String(value)] || String(value || "-")
+);
+
+function requestErrorMessage(detail, status) {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    const messages = detail.map((item) => {
+      const field = Array.isArray(item?.loc) ? item.loc.slice(1).join(".") : "";
+      return field ? `${field}：${item?.msg || "参数无效"}` : (item?.msg || "参数无效");
+    }).filter(Boolean);
+    if (messages.length) return messages.join("；");
+  }
+  return detail?.message || `请求失败：${status}`;
+}
+
 async function request(path, options = {}) {
   const token = window.localStorage.getItem("mediaforge.apiToken") || "";
   const response = await fetch(path, {
@@ -469,10 +514,7 @@ async function request(path, options = {}) {
           : "请求过于频繁，请稍后重试。",
       );
     }
-    const detail = payload.detail;
-    const message = typeof detail === "string"
-      ? detail
-      : (detail?.message || `请求失败：${response.status}`);
+    const message = requestErrorMessage(payload.detail, response.status);
     throw new Error(localizeErrorMessage(message));
   }
   return payload;
@@ -3261,6 +3303,7 @@ function renderProject() {
   $("archiveVerificationLink").hidden = !state.archiveVerificationUrl;
   $("deliveryReceiptLink").href = state.deliveryReceiptUrl || "#";
   $("deliveryReceiptLink").hidden = !state.deliveryReceiptUrl;
+  renderDeliveryFeedback();
   const routeUrlVisible = state.routeUrl && state.routeShotId === state.selectedShotId;
   $("routeLink").href = routeUrlVisible ? state.routeUrl : "#";
   $("routeLink").hidden = !routeUrlVisible;
@@ -5340,6 +5383,123 @@ async function acknowledgeDelivery() {
   }
 }
 
+function renderDeliveryFeedback() {
+  const project = state.project || {};
+  const feedbackView = state.distribution?.feedback || {};
+  const summary = feedbackView.summary || project.delivery_feedback || {};
+  const items = feedbackView.items || [];
+  const latestDelivery = project.latest_delivery || {};
+  const writable = Boolean(state.projectId && latestDelivery.delivery_id && !project.archived);
+  const target = $("deliveryFeedbackTarget");
+  const selectedTarget = target.value;
+  const targets = [
+    {value: `project:${project.project_id || ""}`, label: "项目整体"},
+    ...(project.shots || []).map((runtime) => ({
+      value: `shot:${runtime.shot.shot_id}`,
+      label: `镜头 ${runtime.shot.shot_id}`,
+    })),
+  ];
+  target.innerHTML = targets.length
+    ? targets.map((item) => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`).join("")
+    : `<option value="">项目整体</option>`;
+  const preferredTarget = state.selectedShotId ? `shot:${state.selectedShotId}` : `project:${project.project_id || ""}`;
+  target.value = targets.some((item) => item.value === selectedTarget)
+    ? selectedTarget
+    : (targets.some((item) => item.value === preferredTarget) ? preferredTarget : targets[0]?.value || "");
+  $("deliveryFeedbackOpen").textContent = String(summary.unresolved_count || 0);
+  $("deliveryFeedbackBlockers").textContent = String(summary.blocking_open_count || 0);
+  $("deliveryFeedbackResolved").textContent = String(summary.resolved_count || 0);
+  $("deliveryFeedbackStatus").textContent = latestDelivery.delivery_id
+    ? (summary.unresolved_count ? `${summary.unresolved_count} 项待处理` : "反馈已闭环")
+    : "需先记录分发";
+  [
+    "deliveryFeedbackTarget", "deliveryFeedbackCategory", "deliveryFeedbackSeverity",
+    "deliveryFeedbackVerdict", "deliveryFeedbackRating", "deliveryFeedbackAssignee",
+    "deliveryFeedbackComment", "deliveryFeedbackButton",
+  ].forEach((id) => { $(id).disabled = !writable; });
+  $("deliveryFeedbackList").innerHTML = items.length
+    ? items.slice(0, 30).map((item) => {
+      const closed = ["RESOLVED", "DISMISSED"].includes(item.status);
+      const targetLabel = item.target_type === "shot" ? `镜头 ${item.target_id}` : "项目整体";
+      const severityLabel = deliveryFeedbackLabel("severity", item.severity);
+      const verdictLabel = deliveryFeedbackLabel("verdict", item.verdict);
+      const categoryLabel = deliveryFeedbackLabel("category", item.category);
+      const statusLabel = deliveryFeedbackLabel("status", item.status);
+      const reporter = item.submitted_by === "delivery-recipient"
+        ? "交付对象"
+        : (item.submitted_by || "交付对象");
+      return `<div class="delivery-feedback-item" data-feedback-id="${escapeHtml(item.feedback_id)}">
+        <div><strong>${escapeHtml(severityLabel)} · ${escapeHtml(verdictLabel)} · ${escapeHtml(targetLabel)}</strong><span>${escapeHtml(categoryLabel)} · ${item.rating == null ? "未评分" : `${item.rating}/5`} · ${escapeHtml(reporter)}</span></div>
+        <span>${escapeHtml(item.comment || "")}</span>
+        ${item.assignee ? `<span>负责人：${escapeHtml(item.assignee)}</span>` : ""}
+        ${item.resolution ? `<span>处理结论：${escapeHtml(item.resolution)}</span>` : ""}
+        ${closed ? `<span>状态：${escapeHtml(statusLabel)}</span>` : `<div class="delivery-feedback-triage">
+          <select data-feedback-triage-status aria-label="反馈处理状态"><option value="ACKNOWLEDGED">已确认</option><option value="RESOLVED">已解决</option><option value="DISMISSED">不采纳</option></select>
+          <input data-feedback-resolution maxlength="4000" placeholder="处理结论" aria-label="反馈处理结论" />
+          <button class="button button-quiet" type="button" data-action="triage-delivery-feedback" data-feedback-id="${escapeHtml(item.feedback_id)}" ${writable ? "" : "disabled"}>更新</button>
+        </div>`}
+      </div>`;
+    }).join("")
+    : `<div class="project-empty">尚未收到交付反馈。</div>`;
+}
+
+async function submitDeliveryFeedback() {
+  if (!state.projectId || !state.project?.latest_delivery?.delivery_id) return;
+  const comment = $("deliveryFeedbackComment").value.trim();
+  if (!comment) return;
+  const button = $("deliveryFeedbackButton");
+  const [targetType, targetId] = $("deliveryFeedbackTarget").value.split(":", 2);
+  const rawRating = $("deliveryFeedbackRating").value.trim();
+  setBusy(button, true, "提交中");
+  try {
+    await request(`/projects/${encodeURIComponent(state.projectId)}/delivery-feedback`, {
+      method: "POST",
+      body: JSON.stringify({
+        delivery_id: state.project.latest_delivery.delivery_id,
+        target_type: targetType || "project",
+        target_id: targetId || state.projectId,
+        category: $("deliveryFeedbackCategory").value,
+        severity: $("deliveryFeedbackSeverity").value,
+        verdict: $("deliveryFeedbackVerdict").value,
+        rating: rawRating === "" ? null : Number(rawRating),
+        assignee: $("deliveryFeedbackAssignee").value.trim() || null,
+        comment,
+        actor: "delivery-recipient",
+      }),
+    });
+    $("deliveryFeedbackComment").value = "";
+    $("deliveryFeedbackRating").value = "";
+    logEvent("交付反馈已记录并进入待处理队列。", "muted");
+    await loadProjectContext(state.projectId);
+  } catch (error) {
+    logEvent(error.message, "muted");
+    alert(error.message);
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+async function triageDeliveryFeedback(feedbackId, element) {
+  if (!state.projectId || !feedbackId || !element) return;
+  const row = element.closest("[data-feedback-id]");
+  const status = row?.querySelector("[data-feedback-triage-status]")?.value;
+  const resolution = row?.querySelector("[data-feedback-resolution]")?.value.trim() || "";
+  setBusy(element, true, "更新中");
+  try {
+    await request(`/projects/${encodeURIComponent(state.projectId)}/delivery-feedback/${encodeURIComponent(feedbackId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({status, resolution, actor: "delivery-owner"}),
+    });
+    logEvent("交付反馈处理状态已更新。", "muted");
+    await loadProjectContext(state.projectId);
+  } catch (error) {
+    logEvent(error.message, "muted");
+    alert(error.message);
+  } finally {
+    setBusy(element, false);
+  }
+}
+
 async function closeoutProject() {
   if (!state.projectId) return;
   const button = $("closeoutButton");
@@ -6318,6 +6478,10 @@ document.addEventListener("click", (event) => {
     selectCollaborationDocument(target.dataset.documentId);
     return;
   }
+  if (target.dataset.action === "triage-delivery-feedback") {
+    triageDeliveryFeedback(target.dataset.feedbackId, target);
+    return;
+  }
   if (target.dataset.action === "edit-narrative-event") {
     beginNarrativeEventEdit(target.dataset.eventId);
     return;
@@ -6425,6 +6589,7 @@ $("verifyPackageButton").addEventListener("click", verifyPackage);
 $("releaseButton").addEventListener("click", releaseProject);
 $("recordDeliveryButton").addEventListener("click", recordDelivery);
 $("acknowledgeDeliveryButton").addEventListener("click", acknowledgeDelivery);
+$("deliveryFeedbackButton").addEventListener("click", submitDeliveryFeedback);
 $("closeoutButton").addEventListener("click", closeoutProject);
 $("archivePackageButton").addEventListener("click", buildArchivePackage);
 $("verifyArchiveButton").addEventListener("click", verifyArchivePackage);

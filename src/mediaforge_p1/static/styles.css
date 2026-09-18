@@ -678,6 +678,19 @@ input:focus, textarea:focus, select:focus {
 
 .export-panel { display: grid; gap: 10px; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
 .export-panel strong { display: block; margin-top: 6px; font-size: 13px; }
+.delivery-feedback-block { display: grid; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+.delivery-feedback-summary { margin: 0; }
+.delivery-feedback-editor { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.delivery-feedback-editor textarea { grid-column: 1 / -1; width: 100%; min-width: 0; resize: vertical; }
+.delivery-feedback-editor .button { justify-self: start; }
+.delivery-feedback-list { display: grid; gap: 8px; max-height: 360px; overflow: auto; }
+.delivery-feedback-item { display: grid; gap: 7px; padding: 9px 0; border-bottom: 1px solid #edf0ed; }
+.delivery-feedback-item:last-child { border-bottom: 0; }
+.delivery-feedback-item strong, .delivery-feedback-item span { display: block; }
+.delivery-feedback-item strong { font-size: 11px; }
+.delivery-feedback-item span { color: var(--muted); font-size: 10px; line-height: 1.45; }
+.delivery-feedback-triage { display: grid; grid-template-columns: minmax(0, 120px) minmax(0, 1fr) auto; gap: 7px; }
+.delivery-feedback-triage input, .delivery-feedback-triage select { min-width: 0; width: 100%; }
 .download-link { color: var(--mint); font-size: 11px; font-weight: 800; text-decoration: none; text-align: center; }
 
 @media (max-width: 1180px) {
@@ -786,5 +799,6 @@ input:focus, textarea:focus, select:focus {
   .auth-token-input { width: 74px; }
   .auth-controls .button { padding-left: 7px; padding-right: 7px; }
   .topbar-actions > .button { flex-shrink: 0; }
-  .prompt-editor, .annotation-editor { grid-template-columns: 1fr; }
+  .prompt-editor, .annotation-editor, .delivery-feedback-editor { grid-template-columns: 1fr; }
+  .delivery-feedback-triage { grid-template-columns: 1fr; }
 }

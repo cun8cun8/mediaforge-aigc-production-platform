@@ -439,6 +439,14 @@ class AuthManager:
             required_role = "provider"
         elif path.endswith("/callback"):
             required_role = "provider"
+        elif "/delivery-feedback" in path:
+            required_role = (
+                "viewer"
+                if method.upper() == "GET"
+                else "reviewer"
+                if method.upper() == "POST"
+                else "editor"
+            )
         elif "/review" in path or path.endswith("/approve-ready"):
             required_role = "reviewer"
         elif any(

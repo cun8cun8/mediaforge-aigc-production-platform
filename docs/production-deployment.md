@@ -544,6 +544,15 @@ MEDIAFORGE_AUDIT_ANCHOR_TIMEOUT_SECONDS=10
 租户成本台账可从 `/tenants/me/cost` 查看，也可通过 `/tenants/me/cost/export?format=json`
 或 `format=csv` 下载，方便财务对账和预算审计。
 
+## 交付反馈闭环
+
+交付接收方可在 Studio 中对项目整体或单个镜头提交 `story`、`visual`、`audio`、
+`continuity`、`timing`、`brand` 或 `other` 反馈，并标记 `LOW` 至 `BLOCKER` 的优先级。
+`POST /projects/{id}/delivery-feedback` 需要审核者角色，`PATCH .../{feedback_id}` 由编辑者
+分派、确认、解决或不采纳；解决和不采纳都必须留下处理结论。反馈与交付回执关联但不改写
+已发布的交付事实，会进入审计链、分发报告、复盘报告以及审核训练数据导出，供下一版本建立
+返工分支和评估样本。对外接收方应通过受控身份账户或企业 SSO 接入，不要将匿名写入端点暴露到公网。
+
 ## 权利与模型准入
 
 许可证台账记录支持可选的 `valid_from`、`valid_until`、`rights_uri` 与 `evidence` 字段。

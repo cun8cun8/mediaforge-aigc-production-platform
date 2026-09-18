@@ -193,7 +193,7 @@ class DeliveryDispatcher:
         return DeliveryDispatchResult(
             delivery_id=delivery_id,
             mode="local",
-            destination_uri=destination_package.as_uri(),
+            destination_uri=destination_package.resolve().as_uri(),
             status="DISPATCHED",
             package_sha256=package_sha256,
             package_size_bytes=package_size,
