@@ -399,7 +399,11 @@ backoff; override these with `REPLICATE_HTTP_RETRY_ATTEMPTS` and
 `REPLICATE_HTTP_RETRY_BACKOFF_SECONDS` when needed. Prediction creation uses a
 stable per-job `Idempotency-Key` (`mediaforge-{job_id}`), so a transient
 response or timeout can be retried without intentionally creating a second
-prediction. Non-idempotent `POST` requests are never retried automatically.
+prediction. `REPLICATE_TIMEOUT_SECONDS`, `REPLICATE_POLL_INTERVAL_SECONDS` and
+`REPLICATE_CANCEL_AFTER_SECONDS` control local polling and the remote deadline.
+On timeout, MediaForge requests Replicate's prediction-specific cancellation
+URL before recording the failed attempt. Non-idempotent `POST` requests are
+never retried automatically.
 
 When using `local`, set `MEDIAFORGE_LOCAL_PROVIDER_COMMAND`. The reviewed
 command receives a JSON generation request on stdin and through

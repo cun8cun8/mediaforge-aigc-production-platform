@@ -135,6 +135,7 @@ def build_provider(
             raise ValueError("REPLICATE_API_TOKEN is not configured")
         if not version:
             raise ValueError("REPLICATE_MODEL_VERSION is not configured")
+        raw_cancel_after = os.getenv("REPLICATE_CANCEL_AFTER_SECONDS", "").strip()
         return ReplicateVideoProvider(
             api_token=token,
             version=version,
@@ -148,6 +149,11 @@ def build_provider(
             http_retry_backoff_seconds=float(
                 os.getenv("REPLICATE_HTTP_RETRY_BACKOFF_SECONDS", "0.5")
             ),
+            timeout_seconds=float(os.getenv("REPLICATE_TIMEOUT_SECONDS", "180")),
+            poll_interval_seconds=float(
+                os.getenv("REPLICATE_POLL_INTERVAL_SECONDS", "1")
+            ),
+            cancel_after_seconds=float(raw_cancel_after) if raw_cancel_after else None,
         )
 
     raise ValueError(f"unsupported provider: {provider_name}")

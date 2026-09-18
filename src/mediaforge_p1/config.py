@@ -334,6 +334,7 @@ def _env_float(
     default: float,
     *,
     minimum: float,
+    maximum: float | None = None,
     inclusive: bool = True,
 ) -> float:
     raw = os.getenv(name, str(default)).strip()
@@ -345,6 +346,8 @@ def _env_float(
     if not valid:
         operator = ">=" if inclusive else ">"
         raise ValueError(f"{name} must be {operator} {minimum}, got {value}")
+    if maximum is not None and value > maximum:
+        raise ValueError(f"{name} must be <= {maximum}, got {value}")
     return value
 
 
@@ -628,6 +631,28 @@ def _build_provider_for_mode(mode: str) -> ProviderBundle:
                 0.5,
                 minimum=0,
             )
+            timeout_seconds = _env_float(
+                "REPLICATE_TIMEOUT_SECONDS",
+                180.0,
+                minimum=0,
+                inclusive=False,
+            )
+            poll_interval_seconds = _env_float(
+                "REPLICATE_POLL_INTERVAL_SECONDS",
+                1.0,
+                minimum=0,
+            )
+            raw_cancel_after = os.getenv("REPLICATE_CANCEL_AFTER_SECONDS", "").strip()
+            cancel_after_seconds = (
+                _env_float(
+                    "REPLICATE_CANCEL_AFTER_SECONDS",
+                    5.0,
+                    minimum=5,
+                    maximum=24 * 60 * 60,
+                )
+                if raw_cancel_after
+                else None
+            )
         except ValueError as exc:
             reason = str(exc)
             return ProviderBundle(
@@ -646,6 +671,9 @@ def _build_provider_for_mode(mode: str) -> ProviderBundle:
             {
                 "http_retry_attempts": http_retry_attempts,
                 "http_retry_backoff_seconds": http_retry_backoff_seconds,
+                "timeout_seconds": timeout_seconds,
+                "poll_interval_seconds": poll_interval_seconds,
+                "cancel_after_seconds": cancel_after_seconds,
                 "post_retry_requires_idempotency_key": True,
             }
         )
@@ -676,14 +704,16 @@ def _build_provider_for_mode(mode: str) -> ProviderBundle:
             api_token=token,
             version=version,
             base_url=base_url,
+            timeout_seconds=timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
             http_retry_attempts=http_retry_attempts,
             http_retry_backoff_seconds=http_retry_backoff_seconds,
+            cancel_after_seconds=cancel_after_seconds,
         )
         details.update(
             {
-                "timeout_seconds": provider.timeout_seconds,
-                "poll_interval_seconds": provider.poll_interval_seconds,
                 "estimated_cost": provider.estimated_cost,
+                "cancel_after_header": provider._cancel_after_header(),
             }
         )
         return ProviderBundle(

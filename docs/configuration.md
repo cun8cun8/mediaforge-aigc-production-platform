@@ -61,11 +61,14 @@ inspect the ComfyUI service and declared model inventory. See [ComfyUI Provider 
 $env:MEDIAFORGE_PROVIDER = "replicate"
 $env:REPLICATE_API_TOKEN = "<from-secret-manager>"
 $env:REPLICATE_MODEL_VERSION = "<approved-immutable-version>"
+$env:REPLICATE_TIMEOUT_SECONDS = "180"
+$env:REPLICATE_POLL_INTERVAL_SECONDS = "1"
+$env:REPLICATE_CANCEL_AFTER_SECONDS = "180"
 $env:REPLICATE_HTTP_RETRY_ATTEMPTS = "2"
 $env:REPLICATE_HTTP_RETRY_BACKOFF_SECONDS = "0.5"
 ```
 
-Keep the model version immutable. The adapter sends a per-Job idempotency key and uses bounded retries for transient failures; it does not expose the token in diagnostics. See [Replicate Provider Adapter](replicate-provider.md).
+Keep the model version immutable. The adapter sends a per-Job idempotency key, uses bounded retries for transient failures, and requests a remote prediction deadline through `Cancel-After`. If local polling still reaches its timeout, it requests the prediction's `urls.cancel` endpoint before recording the failure. It does not expose the token in diagnostics. See [Replicate Provider Adapter](replicate-provider.md).
 
 ### Multi-Provider Routing
 

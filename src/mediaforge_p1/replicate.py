@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import mimetypes
 import time
 from dataclasses import dataclass
@@ -39,13 +40,24 @@ class ReplicateVideoProvider:
     estimated_cost: float = 0.20
     http_retry_attempts: int = 2
     http_retry_backoff_seconds: float = 0.5
+    cancel_after_seconds: float | None = None
     name: str = "replicate-video"
 
     def __post_init__(self) -> None:
+        if self.timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be > 0")
+        if self.poll_interval_seconds < 0:
+            raise ValueError("poll_interval_seconds must be >= 0")
         if self.http_retry_attempts < 0:
             raise ValueError("http_retry_attempts must be >= 0")
         if self.http_retry_backoff_seconds < 0:
             raise ValueError("http_retry_backoff_seconds must be >= 0")
+        if self.cancel_after_seconds is not None and not (
+            5 <= self.cancel_after_seconds <= 24 * 60 * 60
+        ):
+            raise ValueError(
+                "cancel_after_seconds must be between 5 and 86400 seconds"
+            )
 
     def supports(self, capability: Capability) -> bool:
         return capability == Capability.IMAGE_TO_VIDEO
@@ -89,14 +101,18 @@ class ReplicateVideoProvider:
             "version": self.version,
             "input": self._build_input(spec),
         }
+        prediction_headers = {"Prefer": "wait=1"}
+        cancel_after = self._cancel_after_header()
+        if cancel_after:
+            prediction_headers["Cancel-After"] = cancel_after
         prediction = self._request_json(
             "POST",
             "/predictions",
             body=payload,
-            headers={"Prefer": "wait=1"},
+            headers=prediction_headers,
             idempotency_key=self._idempotency_key(job_id),
         )
-        prediction = self._poll_prediction(prediction)
+        prediction = self._poll_prediction(prediction, job_id=job_id)
         output_url = self._first_output_url(prediction.get("output"))
         # Output URLs may be hosted on a different domain. Never forward the
         # Provider API token to that file host.
@@ -121,6 +137,7 @@ class ReplicateVideoProvider:
                         "idempotency_key": self._idempotency_key(job_id),
                         "http_retry_attempts": self.http_retry_attempts,
                         "http_retry_backoff_seconds": self.http_retry_backoff_seconds,
+                        "cancel_after": cancel_after,
                         "remote_idempotency": "provider-header",
                     },
                 },
@@ -185,7 +202,12 @@ class ReplicateVideoProvider:
         encoded = base64.b64encode(content).decode("ascii")
         return f"data:{mime_type};base64,{encoded}"
 
-    def _poll_prediction(self, prediction: dict[str, Any]) -> dict[str, Any]:
+    def _poll_prediction(
+        self,
+        prediction: dict[str, Any],
+        *,
+        job_id: str,
+    ) -> dict[str, Any]:
         prediction_url = prediction.get("urls", {}).get("get")
         prediction_id = prediction.get("id")
         if not prediction_url and prediction_id:
@@ -207,9 +229,67 @@ class ReplicateVideoProvider:
                 )
             time.sleep(self.poll_interval_seconds)
             current = self._request_json("GET", prediction_url)
-        raise ReplicateProviderError(
-            f"timed out waiting for prediction {prediction_id or prediction_url}"
+        cancellation = self._cancel_prediction(
+            current,
+            prediction_id=str(prediction_id or ""),
+            job_id=job_id,
         )
+        cancellation_detail = (
+            "remote cancellation requested"
+            if cancellation["requested"]
+            else f"remote cancellation unavailable: {cancellation['detail']}"
+        )
+        raise ReplicateProviderError(
+            "timed out waiting for prediction "
+            f"{prediction_id or prediction_url}; {cancellation_detail}"
+        )
+
+    def _cancel_prediction(
+        self,
+        prediction: dict[str, Any],
+        *,
+        prediction_id: str,
+        job_id: str,
+    ) -> dict[str, Any]:
+        urls = prediction.get("urls")
+        cancel_url = urls.get("cancel") if isinstance(urls, dict) else None
+        if not cancel_url and prediction_id:
+            cancel_url = (
+                f"{self.base_url.rstrip('/')}/predictions/{prediction_id}/cancel"
+            )
+        if not isinstance(cancel_url, str) or not cancel_url.startswith(
+            ("http://", "https://")
+        ):
+            return {"requested": False, "detail": "prediction response has no cancel URL"}
+        try:
+            raw, _ = self._request(
+                "POST",
+                cancel_url,
+                idempotency_key=self._cancel_idempotency_key(job_id),
+            )
+        except ReplicateProviderError as exc:
+            return {"requested": False, "detail": str(exc)}
+        try:
+            response = json.loads(raw.decode("utf-8")) if raw else {}
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            response = {}
+        provider_status = (
+            response.get("status") if isinstance(response, dict) else None
+        )
+        return {
+            "requested": True,
+            "detail": f"provider status {provider_status or 'accepted'}",
+        }
+
+    def _cancel_after_header(self) -> str | None:
+        seconds = (
+            self.cancel_after_seconds
+            if self.cancel_after_seconds is not None
+            else self.timeout_seconds
+        )
+        if not 5 <= seconds <= 24 * 60 * 60:
+            return None
+        return f"{math.ceil(seconds)}s"
 
     @staticmethod
     def _first_output_url(output: Any) -> str:
@@ -329,6 +409,10 @@ class ReplicateVideoProvider:
     @staticmethod
     def _idempotency_key(job_id: str) -> str:
         return f"mediaforge-{job_id}"
+
+    @staticmethod
+    def _cancel_idempotency_key(job_id: str) -> str:
+        return f"mediaforge-cancel-{job_id}"
 
     @staticmethod
     def _is_retryable_http_error(

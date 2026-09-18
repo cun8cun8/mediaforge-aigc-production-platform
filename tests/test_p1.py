@@ -1589,6 +1589,20 @@ def test_replicate_provider_rejects_negative_http_retry_settings() -> None:
             http_retry_backoff_seconds=-1,
         )
 
+    with pytest.raises(ValueError, match="timeout_seconds must be > 0"):
+        ReplicateVideoProvider(
+            api_token="token",
+            version="version",
+            timeout_seconds=0,
+        )
+
+    with pytest.raises(ValueError, match="cancel_after_seconds must be between"):
+        ReplicateVideoProvider(
+            api_token="token",
+            version="version",
+            cancel_after_seconds=4,
+        )
+
 
 def test_replicate_provider_submits_polls_and_downloads_video(tmp_path: Path) -> None:
     source_video = tmp_path / "source.mp4"
@@ -1607,6 +1621,7 @@ def test_replicate_provider_submits_polls_and_downloads_video(tmp_path: Path) ->
             assert self.path == "/v1/predictions"
             assert self.headers["Authorization"] == "Bearer test-token"
             assert self.headers["Idempotency-Key"] == "mediaforge-job_replicate"
+            assert self.headers["Cancel-After"] == "180s"
             length = int(self.headers["Content-Length"])
             requests.append(json.loads(self.rfile.read(length)))
             body = json.dumps(
@@ -1686,9 +1701,111 @@ def test_replicate_provider_submits_polls_and_downloads_video(tmp_path: Path) ->
     assert replicate_metadata["schema_version"] == "mediaforge-artifact-metadata-v1"
     assert replicate_metadata["job_id"] == "job_replicate"
     assert replicate_metadata["request"]["idempotency_key"] == "mediaforge-job_replicate"
+    assert replicate_metadata["request"]["cancel_after"] == "180s"
     assert replicate_metadata["request"]["remote_idempotency"] == "provider-header"
     assert "test-token" not in json.dumps(replicate_metadata)
     assert probe_video(Path(artifact.uri)).valid is True
+
+
+def test_replicate_provider_cancels_remote_prediction_after_local_timeout(
+    tmp_path: Path,
+) -> None:
+    calls: list[dict[str, str]] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_args) -> None:
+            return
+
+        def _reply(self, status: int, body: dict) -> None:
+            encoded = json.dumps(body).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+        def do_POST(self) -> None:
+            calls.append(
+                {
+                    "path": self.path,
+                    "idempotency_key": self.headers.get("Idempotency-Key", ""),
+                    "cancel_after": self.headers.get("Cancel-After", ""),
+                }
+            )
+            base_url = f"http://127.0.0.1:{self.server.server_port}/v1"
+            if self.path == "/v1/predictions":
+                self._reply(
+                    201,
+                    {
+                        "id": "prediction-timeout",
+                        "status": "starting",
+                        "urls": {
+                            "get": f"{base_url}/predictions/prediction-timeout",
+                            "cancel": (
+                                f"{base_url}/predictions/prediction-timeout/cancel"
+                            ),
+                        },
+                    },
+                )
+                return
+            if self.path == "/v1/predictions/prediction-timeout/cancel":
+                self.send_response(204)
+                self.end_headers()
+                return
+            self._reply(404, {"error": "not found"})
+
+        def do_GET(self) -> None:
+            if self.path != "/v1/predictions/prediction-timeout":
+                self._reply(404, {"error": "not found"})
+                return
+            base_url = f"http://127.0.0.1:{self.server.server_port}/v1"
+            self._reply(
+                200,
+                {
+                    "id": "prediction-timeout",
+                    "status": "processing",
+                    "urls": {
+                        "cancel": f"{base_url}/predictions/prediction-timeout/cancel"
+                    },
+                },
+            )
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        provider = ReplicateVideoProvider(
+            api_token="test-token",
+            version="model-version:v1",
+            base_url=f"http://127.0.0.1:{server.server_port}/v1",
+            timeout_seconds=0.03,
+            poll_interval_seconds=0.001,
+            cancel_after_seconds=5,
+            http_retry_attempts=0,
+        )
+        with pytest.raises(ReplicateProviderError, match="remote cancellation requested"):
+            provider.generate(
+                make_spec(),
+                job_id="job_timeout",
+                output_dir=tmp_path / "timed-out",
+            )
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+        server.server_close()
+
+    assert calls == [
+        {
+            "path": "/v1/predictions",
+            "idempotency_key": "mediaforge-job_timeout",
+            "cancel_after": "5s",
+        },
+        {
+            "path": "/v1/predictions/prediction-timeout/cancel",
+            "idempotency_key": "mediaforge-cancel-job_timeout",
+            "cancel_after": "",
+        },
+    ]
 
 
 def test_replicate_provider_can_be_built_from_environment(monkeypatch) -> None:
@@ -1698,6 +1815,9 @@ def test_replicate_provider_can_be_built_from_environment(monkeypatch) -> None:
     monkeypatch.setenv("REPLICATE_API_BASE_URL", "http://127.0.0.1:9124/v1/")
     monkeypatch.setenv("REPLICATE_HTTP_RETRY_ATTEMPTS", "4")
     monkeypatch.setenv("REPLICATE_HTTP_RETRY_BACKOFF_SECONDS", "0.25")
+    monkeypatch.setenv("REPLICATE_TIMEOUT_SECONDS", "240")
+    monkeypatch.setenv("REPLICATE_POLL_INTERVAL_SECONDS", "0.5")
+    monkeypatch.setenv("REPLICATE_CANCEL_AFTER_SECONDS", "300")
 
     bundle = build_provider_from_env()
 
@@ -1706,9 +1826,34 @@ def test_replicate_provider_can_be_built_from_environment(monkeypatch) -> None:
     assert bundle.provider.base_url == "http://127.0.0.1:9124/v1"
     assert bundle.provider.http_retry_attempts == 4
     assert bundle.provider.http_retry_backoff_seconds == 0.25
+    assert bundle.provider.timeout_seconds == 240
+    assert bundle.provider.poll_interval_seconds == 0.5
+    assert bundle.provider.cancel_after_seconds == 300
     assert bundle.details["http_retry_attempts"] == 4
     assert bundle.details["http_retry_backoff_seconds"] == 0.25
+    assert bundle.details["timeout_seconds"] == 240
+    assert bundle.details["poll_interval_seconds"] == 0.5
+    assert bundle.details["cancel_after_seconds"] == 300
+    assert bundle.details["cancel_after_header"] == "300s"
     assert bundle.details["post_retry_requires_idempotency_key"] is True
+
+
+def test_replicate_provider_allows_short_local_timeout_without_cancel_header(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("MEDIAFORGE_PROVIDER", "replicate")
+    monkeypatch.setenv("REPLICATE_API_TOKEN", "token")
+    monkeypatch.setenv("REPLICATE_MODEL_VERSION", "version")
+    monkeypatch.setenv("REPLICATE_TIMEOUT_SECONDS", "2")
+    monkeypatch.delenv("REPLICATE_CANCEL_AFTER_SECONDS", raising=False)
+
+    bundle = build_provider_from_env()
+
+    assert bundle.configured is True
+    assert isinstance(bundle.provider, ReplicateVideoProvider)
+    assert bundle.provider.timeout_seconds == 2
+    assert bundle.provider.cancel_after_seconds is None
+    assert bundle.details["cancel_after_header"] is None
 
 
 def test_replicate_input_includes_registered_reference_images(tmp_path: Path) -> None:
