@@ -10221,6 +10221,60 @@ class MediaForgeService:
                     return reference
         raise WorkflowError("Replicate prediction is not registered for this job")
 
+    def _cancel_remote_provider_job(
+        self,
+        project: ProjectRuntime,
+        job: JobRecord,
+    ) -> dict[str, Any]:
+        """Best-effort cancellation of a cloud job already bound to MediaForge."""
+        provider_name = self._routed_provider_for_job(project, job.job_id)
+        if provider_name != "replicate-video":
+            return {
+                "attempted": False,
+                "requested": False,
+                "reason": "job has no active Replicate prediction",
+            }
+        try:
+            prediction_id = self._replicate_prediction_for_job(project, job.job_id)
+            provider = self._provider_named("replicate-video")
+        except WorkflowError as exc:
+            return {
+                "attempted": False,
+                "requested": False,
+                "reason": str(exc),
+            }
+
+        cancel_prediction = getattr(provider, "cancel_prediction", None)
+        if not callable(cancel_prediction):
+            return {
+                "attempted": False,
+                "requested": False,
+                "prediction_id": prediction_id,
+                "reason": "Replicate provider cancellation is not configured",
+            }
+        try:
+            outcome = cancel_prediction(prediction_id, job_id=job.job_id)
+        except Exception as exc:
+            return {
+                "attempted": True,
+                "requested": False,
+                "prediction_id": prediction_id,
+                "reason": f"remote cancellation failed: {exc}",
+            }
+        if not isinstance(outcome, dict):
+            return {
+                "attempted": True,
+                "requested": False,
+                "prediction_id": prediction_id,
+                "reason": "Replicate provider returned an invalid cancellation result",
+            }
+        return {
+            "attempted": True,
+            "requested": bool(outcome.get("requested")),
+            "prediction_id": prediction_id,
+            "reason": str(outcome.get("detail") or "remote cancellation completed"),
+        }
+
     def _provider_named(self, name: str) -> GenerationProvider:
         for registration in self.router.registrations:
             if registration.provider.name == name:
@@ -13522,6 +13576,15 @@ class MediaForgeService:
             and job.retry_at is None
         ):
             raise WorkflowError(f"job is already terminal: {job.status}")
+        remote_cancellation = (
+            self._cancel_remote_provider_job(project, job)
+            if job.status == JobStatus.RUNNING
+            else {
+                "attempted": False,
+                "requested": False,
+                "reason": "job has not started remote execution",
+            }
+        )
         if job.status in {
             JobStatus.FAILED,
             JobStatus.QUALITY_REJECTED,
@@ -13543,10 +13606,16 @@ class MediaForgeService:
             actor=actor,
             message=f"{job.spec.shot_id} job canceled.",
             shot_id=job.spec.shot_id,
-            details={"job_id": job.job_id, "status": job.status},
+            details={
+                "job_id": job.job_id,
+                "status": job.status,
+                "remote_cancellation": remote_cancellation,
+            },
         )
         self._persist()
-        return self._job_view(job)
+        result = self._job_view(job)
+        result["remote_cancellation"] = remote_cancellation
+        return result
 
     def operations_summary(self, project_id: str) -> dict[str, Any]:
         project = self._project(project_id)

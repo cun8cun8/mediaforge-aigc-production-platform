@@ -1869,6 +1869,56 @@ def test_replicate_provider_cancels_remote_prediction_after_local_timeout(
     ]
 
 
+def test_replicate_provider_cancels_a_persisted_prediction_by_id() -> None:
+    calls: list[dict[str, str]] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_args) -> None:
+            return
+
+        def do_POST(self) -> None:
+            calls.append(
+                {
+                    "path": self.path,
+                    "authorization": self.headers.get("Authorization", ""),
+                    "idempotency_key": self.headers.get("Idempotency-Key", ""),
+                }
+            )
+            assert self.path == "/v1/predictions/prediction-bound/cancel"
+            self.send_response(204)
+            self.end_headers()
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        provider = ReplicateVideoProvider(
+            api_token="test-token",
+            version="model-version:v1",
+            base_url=f"http://127.0.0.1:{server.server_port}/v1",
+            timeout_seconds=180,
+            cancel_request_timeout_seconds=7,
+            http_retry_attempts=0,
+        )
+        result = provider.cancel_prediction(
+            "prediction-bound",
+            job_id="job-bound",
+        )
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+        server.server_close()
+
+    assert result == {"requested": True, "detail": "provider status accepted"}
+    assert calls == [
+        {
+            "path": "/v1/predictions/prediction-bound/cancel",
+            "authorization": "Bearer test-token",
+            "idempotency_key": "mediaforge-cancel-job-bound",
+        }
+    ]
+
+
 def test_replicate_provider_can_be_built_from_environment(monkeypatch) -> None:
     monkeypatch.setenv("MEDIAFORGE_PROVIDER", "replicate")
     monkeypatch.setenv("REPLICATE_API_TOKEN", "token")
@@ -1877,6 +1927,7 @@ def test_replicate_provider_can_be_built_from_environment(monkeypatch) -> None:
     monkeypatch.setenv("REPLICATE_HTTP_RETRY_ATTEMPTS", "4")
     monkeypatch.setenv("REPLICATE_HTTP_RETRY_BACKOFF_SECONDS", "0.25")
     monkeypatch.setenv("REPLICATE_TIMEOUT_SECONDS", "240")
+    monkeypatch.setenv("REPLICATE_CANCEL_REQUEST_TIMEOUT_SECONDS", "12")
     monkeypatch.setenv("REPLICATE_POLL_INTERVAL_SECONDS", "0.5")
     monkeypatch.setenv("REPLICATE_CANCEL_AFTER_SECONDS", "300")
     monkeypatch.setenv(
@@ -1892,12 +1943,14 @@ def test_replicate_provider_can_be_built_from_environment(monkeypatch) -> None:
     assert bundle.provider.http_retry_attempts == 4
     assert bundle.provider.http_retry_backoff_seconds == 0.25
     assert bundle.provider.timeout_seconds == 240
+    assert bundle.provider.cancel_request_timeout_seconds == 12
     assert bundle.provider.poll_interval_seconds == 0.5
     assert bundle.provider.cancel_after_seconds == 300
     assert bundle.provider.webhook_url_template
     assert bundle.details["http_retry_attempts"] == 4
     assert bundle.details["http_retry_backoff_seconds"] == 0.25
     assert bundle.details["timeout_seconds"] == 240
+    assert bundle.details["cancel_request_timeout_seconds"] == 12
     assert bundle.details["poll_interval_seconds"] == 0.5
     assert bundle.details["cancel_after_seconds"] == 300
     assert bundle.details["cancel_after_header"] == "300s"

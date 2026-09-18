@@ -637,6 +637,12 @@ def _build_provider_for_mode(mode: str) -> ProviderBundle:
                 minimum=0,
                 inclusive=False,
             )
+            cancel_request_timeout_seconds = _env_float(
+                "REPLICATE_CANCEL_REQUEST_TIMEOUT_SECONDS",
+                15.0,
+                minimum=1,
+                maximum=300,
+            )
             poll_interval_seconds = _env_float(
                 "REPLICATE_POLL_INTERVAL_SECONDS",
                 1.0,
@@ -676,6 +682,7 @@ def _build_provider_for_mode(mode: str) -> ProviderBundle:
                 "http_retry_attempts": http_retry_attempts,
                 "http_retry_backoff_seconds": http_retry_backoff_seconds,
                 "timeout_seconds": timeout_seconds,
+                "cancel_request_timeout_seconds": cancel_request_timeout_seconds,
                 "poll_interval_seconds": poll_interval_seconds,
                 "cancel_after_seconds": cancel_after_seconds,
                 "webhook_url_template_configured": bool(webhook_url_template),
@@ -714,6 +721,7 @@ def _build_provider_for_mode(mode: str) -> ProviderBundle:
             http_retry_attempts=http_retry_attempts,
             http_retry_backoff_seconds=http_retry_backoff_seconds,
             cancel_after_seconds=cancel_after_seconds,
+            cancel_request_timeout_seconds=cancel_request_timeout_seconds,
             webhook_url_template=webhook_url_template,
         )
         details.update(

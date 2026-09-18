@@ -49,6 +49,7 @@ class ReplicateVideoProvider:
     http_retry_attempts: int = 2
     http_retry_backoff_seconds: float = 0.5
     cancel_after_seconds: float | None = None
+    cancel_request_timeout_seconds: float = 15.0
     webhook_url_template: str | None = None
     name: str = "replicate-video"
 
@@ -66,6 +67,10 @@ class ReplicateVideoProvider:
         ):
             raise ValueError(
                 "cancel_after_seconds must be between 5 and 86400 seconds"
+            )
+        if not 1 <= self.cancel_request_timeout_seconds <= 300:
+            raise ValueError(
+                "cancel_request_timeout_seconds must be between 1 and 300 seconds"
             )
         if self.webhook_url_template is not None:
             template = self.webhook_url_template.strip()
@@ -224,6 +229,22 @@ class ReplicateVideoProvider:
         return self._cancel_prediction(
             submission.prediction,
             prediction_id=submission.prediction_id,
+            job_id=job_id,
+        )
+
+    def cancel_prediction(
+        self,
+        prediction_id: str,
+        *,
+        job_id: str,
+    ) -> dict[str, Any]:
+        """Request cancellation for a persisted asynchronous prediction."""
+        clean_prediction_id = prediction_id.strip()
+        if not clean_prediction_id:
+            return {"requested": False, "detail": "prediction id is blank"}
+        return self._cancel_prediction(
+            {"id": clean_prediction_id},
+            prediction_id=clean_prediction_id,
             job_id=job_id,
         )
 
@@ -405,6 +426,7 @@ class ReplicateVideoProvider:
                 "POST",
                 cancel_url,
                 idempotency_key=self._cancel_idempotency_key(job_id),
+                timeout_seconds=self.cancel_request_timeout_seconds,
             )
         except ReplicateProviderError as exc:
             return {"requested": False, "detail": str(exc)}
@@ -486,6 +508,7 @@ class ReplicateVideoProvider:
         headers: dict[str, str] | None = None,
         include_auth: bool = True,
         idempotency_key: str | None = None,
+        timeout_seconds: float | None = None,
     ) -> tuple[bytes, str | None]:
         url = target if target.startswith(("http://", "https://")) else (
             f"{self.base_url.rstrip('/')}/{target.lstrip('/')}"
@@ -503,6 +526,7 @@ class ReplicateVideoProvider:
         if body is not None:
             data = json.dumps(body).encode("utf-8")
             request_headers["Content-Type"] = "application/json"
+        request_timeout_seconds = timeout_seconds or self.timeout_seconds
         attempts = self.http_retry_attempts + 1
         for attempt in range(attempts):
             # Rebuild the request for every attempt so urllib can safely
@@ -514,7 +538,7 @@ class ReplicateVideoProvider:
                 method=method,
             )
             try:
-                with urlopen(request, timeout=self.timeout_seconds) as response:
+                with urlopen(request, timeout=request_timeout_seconds) as response:
                     return response.read(), response.headers.get("Content-Type")
             except HTTPError as exc:
                 if (

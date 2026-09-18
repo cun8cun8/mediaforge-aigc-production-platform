@@ -150,6 +150,9 @@ def build_provider(
                 os.getenv("REPLICATE_HTTP_RETRY_BACKOFF_SECONDS", "0.5")
             ),
             timeout_seconds=float(os.getenv("REPLICATE_TIMEOUT_SECONDS", "180")),
+            cancel_request_timeout_seconds=float(
+                os.getenv("REPLICATE_CANCEL_REQUEST_TIMEOUT_SECONDS", "15")
+            ),
             poll_interval_seconds=float(
                 os.getenv("REPLICATE_POLL_INTERVAL_SECONDS", "1")
             ),

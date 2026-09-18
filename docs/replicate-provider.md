@@ -17,6 +17,7 @@ The HTTP retry controls are configured with:
 - `REPLICATE_HTTP_RETRY_ATTEMPTS` (default `2`);
 - `REPLICATE_HTTP_RETRY_BACKOFF_SECONDS` (default `0.5`).
 - `REPLICATE_TIMEOUT_SECONDS` (default `180`);
+- `REPLICATE_CANCEL_REQUEST_TIMEOUT_SECONDS` (default `15`, valid range `1` to `300`);
 - `REPLICATE_POLL_INTERVAL_SECONDS` (default `1`);
 - `REPLICATE_CANCEL_AFTER_SECONDS` (default follows the local timeout; valid range `5` to `86400`).
 
@@ -36,6 +37,11 @@ polling timeout, the adapter also calls the response's `urls.cancel` endpoint
 with a separate stable cancellation idempotency key. This limits orphaned
 remote jobs and records whether the terminal Provider request was accepted in
 the job failure reason. A failure to cancel does not hide the original timeout.
+The same bounded cancellation request is issued when an operator cancels a
+Replicate native-webhook Job after its prediction ID has been bound to the Job.
+The control plane records the attempt and result in `job.canceled`; an outage
+in the Provider cancellation endpoint does not prevent the local Job from
+entering `CANCELED`.
 
 已登记的参考图会进入 `GenerationSpec.reference_assets`，每项包含资产 ID、版本、
 本地 URI、SHA-256、许可证和来源。默认输入构造器会把参考图放入

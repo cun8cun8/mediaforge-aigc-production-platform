@@ -262,6 +262,7 @@ const PROVIDER_DETAIL_LABELS = {
   credential_configured: "API 凭据已配置",
   model_version_configured: "模型版本已配置",
   timeout_seconds: "超时时间",
+  cancel_request_timeout_seconds: "取消请求超时",
   poll_interval_seconds: "轮询间隔",
   cancel_after_seconds: "远端取消期限",
   cancel_after_header: "远端取消请求头",
@@ -6241,10 +6242,16 @@ async function processJob(jobId) {
 async function cancelJob(jobId) {
   if (!state.projectId || !jobId) return;
   try {
-    await request(`/projects/${encodeURIComponent(state.projectId)}/jobs/${encodeURIComponent(jobId)}/cancel`, {
+    const result = await request(`/projects/${encodeURIComponent(state.projectId)}/jobs/${encodeURIComponent(jobId)}/cancel`, {
       method: "POST",
     });
-    logEvent(`${jobId} 已取消。`, "muted");
+    const remoteCancellation = result.remote_cancellation;
+    const message = remoteCancellation?.attempted
+      ? (remoteCancellation.requested
+        ? `${jobId} 已取消，已向云端服务请求停止。`
+        : `${jobId} 已取消；云端停止请求未确认，请查看审计记录。`)
+      : `${jobId} 已取消。`;
+    logEvent(message, "muted");
     await loadProjectContext(state.projectId);
   } catch (error) {
     logEvent(error.message, "muted");

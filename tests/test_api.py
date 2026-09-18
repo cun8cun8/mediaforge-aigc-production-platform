@@ -60,6 +60,7 @@ def make_client(
     monkeypatch.delenv("MEDIAFORGE_PROVIDERS", raising=False)
     monkeypatch.delenv("REPLICATE_API_TOKEN", raising=False)
     monkeypatch.delenv("REPLICATE_MODEL_VERSION", raising=False)
+    monkeypatch.delenv("REPLICATE_CANCEL_REQUEST_TIMEOUT_SECONDS", raising=False)
     monkeypatch.delenv("REPLICATE_WEBHOOK_URL_TEMPLATE", raising=False)
     monkeypatch.delenv("REPLICATE_WEBHOOK_SIGNING_SECRET", raising=False)
     monkeypatch.delenv("REPLICATE_WEBHOOK_MAX_AGE_SECONDS", raising=False)
@@ -3121,6 +3122,67 @@ def test_non_terminal_job_can_be_canceled_from_api(
     assert any(event["action"] == "job.canceled" for event in audit.json()["events"])
 
 
+def test_cancel_job_requests_bound_replicate_prediction_from_api(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client = make_client(tmp_path, monkeypatch)
+    service = client.app.state.mediaforge
+    calls: list[tuple[str, str]] = []
+
+    class ReplicateCancellationProvider:
+        name = "replicate-video"
+
+        def supports(self, capability: Capability) -> bool:
+            return capability == Capability.IMAGE_TO_VIDEO
+
+        def estimate_cost(self, _spec: GenerationSpec) -> float:
+            return 0.2
+
+        def cancel_prediction(self, prediction_id: str, *, job_id: str) -> dict:
+            calls.append((prediction_id, job_id))
+            return {"requested": True, "detail": "provider status canceled"}
+
+    provider = ReplicateCancellationProvider()
+    service.provider = provider
+    service.router = ProviderRouter(
+        [ProviderRegistration(provider=provider, priority=1)]
+    )
+    project_id = "api_cancel_replicate_job"
+    assert client.post("/projects", json=make_brief(project_id)).status_code == 201
+    plan = client.post(f"/projects/{project_id}/plan").json()
+    shot_id = plan["shots"][0]["shot"]["shot_id"]
+    runtime = service.projects[project_id].shots[shot_id]
+    job = service.jobs.create(runtime.spec, f"{project_id}:{shot_id}:replicate")
+    runtime.current_job_id = job.job_id
+    service.provider_callback(
+        project_id,
+        job.job_id,
+        event_id="replicate-binding-event",
+        provider="replicate-video",
+        status=JobStatus.RUNNING,
+        external_reference="prediction-bound-from-api",
+    )
+
+    canceled = client.post(f"/projects/{project_id}/jobs/{job.job_id}/cancel")
+
+    assert canceled.status_code == 200
+    assert canceled.json()["status"] == "CANCELED"
+    assert canceled.json()["remote_cancellation"] == {
+        "attempted": True,
+        "requested": True,
+        "prediction_id": "prediction-bound-from-api",
+        "reason": "provider status canceled",
+    }
+    assert calls == [("prediction-bound-from-api", job.job_id)]
+    canceled_event = next(
+        event
+        for event in reversed(service.projects[project_id].audit_events)
+        if event.action == "job.canceled"
+    )
+    assert canceled_event.details["remote_cancellation"]["requested"] is True
+
+
 def test_failed_shot_can_be_retried_from_api(
     tmp_path: Path,
     monkeypatch,
@@ -3423,6 +3485,8 @@ def test_studio_static_assets_are_served(tmp_path: Path, monkeypatch) -> None:
     assert "submit-all" in script.text
     assert "isMockPreview" in script.text
     assert "模拟预览" in script.text
+    assert "remote_cancellation" in script.text
+    assert "已向云端服务请求停止" in script.text
     assert "/studio/overview" in script.text
     assert "/studio/metrics" in script.text
     assert "/governance/license-registry/validate" in script.text

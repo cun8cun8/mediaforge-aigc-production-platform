@@ -401,9 +401,12 @@ stable per-job `Idempotency-Key` (`mediaforge-{job_id}`), so a transient
 response or timeout can be retried without intentionally creating a second
 prediction. `REPLICATE_TIMEOUT_SECONDS`, `REPLICATE_POLL_INTERVAL_SECONDS` and
 `REPLICATE_CANCEL_AFTER_SECONDS` control local polling and the remote deadline.
-On timeout, MediaForge requests Replicate's prediction-specific cancellation
-URL before recording the failed attempt. Non-idempotent `POST` requests are
-never retried automatically.
+`REPLICATE_CANCEL_REQUEST_TIMEOUT_SECONDS` separately bounds the cloud
+cancellation request (default `15`) so a manual cancellation does not inherit a
+long generation timeout. On timeout, or when an operator cancels a bound
+native-webhook Job, MediaForge requests Replicate's prediction-specific
+cancellation URL before recording the terminal local state. Non-idempotent
+`POST` requests are never retried automatically.
 
 Set `MEDIAFORGE_WORKER_EXECUTION_MODE=replicate-webhook` together with
 `REPLICATE_WEBHOOK_URL_TEMPLATE` when a public HTTPS control plane should
