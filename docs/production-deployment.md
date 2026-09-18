@@ -348,7 +348,9 @@ Compose 从 `.env` 插值；使用其他环境文件时同时传入 `--env-file`
 `MEDIAFORGE_RATE_LIMIT_BACKEND=sqlite`、`MEDIAFORGE_RATE_LIMIT_REQUESTS=120`、
 `MEDIAFORGE_RATE_LIMIT_WINDOW_SECONDS=60`。工作台只读请求使用独立桶，默认是写入阈值的五倍；
 可通过 `MEDIAFORGE_RATE_LIMIT_READ_REQUESTS=600` 明确设置。这样项目详情的并行读取和协作刷新
-不会消耗生成、审核、发布等写操作配额。每个响应包含实际生效桶的剩余配额响应头。
+不会消耗生成、审核、发布等写操作配额。每个响应包含实际生效桶的剩余配额响应头；拒绝响应还会
+返回精确的 `Retry-After`、`X-RateLimit-Reset` 和 JSON 恢复时间，工作台应按该时间退避，
+而不是假定整个窗口都不可用。
 
 用量计费台账写入 `MEDIAFORGE_BILLING_DB`，事件以 `(tenant_id, event_id)` 幂等；旧表会
 在事务中迁移并保留记录。Provider 成功

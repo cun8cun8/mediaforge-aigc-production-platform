@@ -13,6 +13,7 @@ from uuid import uuid4
 
 import pytest
 from PIL import Image
+import mediaforge_p1.replicate as replicate_module
 
 from mediaforge_p1.comfyui import (
     ComfyUIProvider,
@@ -112,6 +113,33 @@ def test_sqlite_rate_limit_is_atomic_under_concurrency(tmp_path: Path) -> None:
 
     assert sum(allowed for allowed, _ in results) == 3
     assert all(remaining == 0 for allowed, remaining in results if not allowed)
+
+
+def test_rate_limit_decision_exposes_the_earliest_recovery_time(tmp_path: Path) -> None:
+    limiter = SlidingWindowRateLimiter(
+        tmp_path / "rate-limit.sqlite3",
+        limit=2,
+        window_seconds=10,
+    )
+
+    first = limiter.check("tenant_a", now=100)
+    second = limiter.check("tenant_a", now=101)
+    rejected = limiter.check("tenant_a", now=102)
+    almost_ready = limiter.check("tenant_a", now=109.25)
+    recovered = limiter.check("tenant_a", now=110)
+
+    assert first.allowed is True
+    assert first.remaining == 1
+    assert first.reset_at_epoch == 110
+    assert second.allowed is True
+    assert second.remaining == 0
+    assert rejected.allowed is False
+    assert rejected.remaining == 0
+    assert rejected.retry_after_seconds == 8
+    assert rejected.reset_at_epoch == 110
+    assert almost_ready.retry_after_seconds == 1
+    assert recovered.allowed is True
+    assert recovered.remaining == 0
 
 
 def make_spec(
@@ -1589,6 +1617,13 @@ def test_replicate_provider_rejects_negative_http_retry_settings() -> None:
             http_retry_backoff_seconds=-1,
         )
 
+    with pytest.raises(ValueError, match="http_retry_max_delay_seconds must be between"):
+        ReplicateVideoProvider(
+            api_token="token",
+            version="version",
+            http_retry_max_delay_seconds=301,
+        )
+
     with pytest.raises(ValueError, match="timeout_seconds must be > 0"):
         ReplicateVideoProvider(
             api_token="token",
@@ -1869,6 +1904,97 @@ def test_replicate_provider_cancels_remote_prediction_after_local_timeout(
     ]
 
 
+def test_replicate_provider_honors_a_short_retry_after_header(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    requests = 0
+    delays: list[float] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_args) -> None:
+            return
+
+        def do_GET(self) -> None:
+            nonlocal requests
+            requests += 1
+            assert self.path == "/v1/models?limit=1"
+            if requests == 1:
+                self.send_response(429)
+                self.send_header("Retry-After", "3")
+                self.end_headers()
+                return
+            body = json.dumps({"results": []}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    monkeypatch.setattr(replicate_module.time, "sleep", delays.append)
+    try:
+        provider = ReplicateVideoProvider(
+            api_token="test-token",
+            version="model-version:v1",
+            base_url=f"http://127.0.0.1:{server.server_port}/v1",
+            http_retry_attempts=1,
+            http_retry_backoff_seconds=0,
+            http_retry_max_delay_seconds=5,
+        )
+        assert provider._request_json("GET", "/models?limit=1") == {"results": []}
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+        server.server_close()
+
+    assert requests == 2
+    assert delays == [3]
+
+
+def test_replicate_provider_surfaces_a_long_retry_after_for_job_scheduling(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    requests = 0
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_args) -> None:
+            return
+
+        def do_GET(self) -> None:
+            nonlocal requests
+            requests += 1
+            self.send_response(429)
+            self.send_header("Retry-After", "45")
+            self.end_headers()
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    monkeypatch.setattr(replicate_module.time, "sleep", lambda _delay: None)
+    try:
+        provider = ReplicateVideoProvider(
+            api_token="test-token",
+            version="model-version:v1",
+            base_url=f"http://127.0.0.1:{server.server_port}/v1",
+            http_retry_attempts=2,
+            http_retry_backoff_seconds=0,
+            http_retry_max_delay_seconds=5,
+        )
+        with pytest.raises(ReplicateProviderError, match="retry after 45s") as error:
+            provider._request_json("GET", "/models?limit=1")
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+        server.server_close()
+
+    assert error.value.retry_after_seconds == 45
+    assert requests == 1
+
+
 def test_replicate_provider_cancels_a_persisted_prediction_by_id() -> None:
     calls: list[dict[str, str]] = []
 
@@ -1926,6 +2052,7 @@ def test_replicate_provider_can_be_built_from_environment(monkeypatch) -> None:
     monkeypatch.setenv("REPLICATE_API_BASE_URL", "http://127.0.0.1:9124/v1/")
     monkeypatch.setenv("REPLICATE_HTTP_RETRY_ATTEMPTS", "4")
     monkeypatch.setenv("REPLICATE_HTTP_RETRY_BACKOFF_SECONDS", "0.25")
+    monkeypatch.setenv("REPLICATE_HTTP_RETRY_MAX_DELAY_SECONDS", "11")
     monkeypatch.setenv("REPLICATE_TIMEOUT_SECONDS", "240")
     monkeypatch.setenv("REPLICATE_CANCEL_REQUEST_TIMEOUT_SECONDS", "12")
     monkeypatch.setenv("REPLICATE_POLL_INTERVAL_SECONDS", "0.5")
@@ -1942,6 +2069,7 @@ def test_replicate_provider_can_be_built_from_environment(monkeypatch) -> None:
     assert bundle.provider.base_url == "http://127.0.0.1:9124/v1"
     assert bundle.provider.http_retry_attempts == 4
     assert bundle.provider.http_retry_backoff_seconds == 0.25
+    assert bundle.provider.http_retry_max_delay_seconds == 11
     assert bundle.provider.timeout_seconds == 240
     assert bundle.provider.cancel_request_timeout_seconds == 12
     assert bundle.provider.poll_interval_seconds == 0.5
@@ -1949,6 +2077,7 @@ def test_replicate_provider_can_be_built_from_environment(monkeypatch) -> None:
     assert bundle.provider.webhook_url_template
     assert bundle.details["http_retry_attempts"] == 4
     assert bundle.details["http_retry_backoff_seconds"] == 0.25
+    assert bundle.details["http_retry_max_delay_seconds"] == 11
     assert bundle.details["timeout_seconds"] == 240
     assert bundle.details["cancel_request_timeout_seconds"] == 12
     assert bundle.details["poll_interval_seconds"] == 0.5

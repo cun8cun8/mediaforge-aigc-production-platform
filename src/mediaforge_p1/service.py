@@ -9336,6 +9336,9 @@ class MediaForgeService:
                         job,
                         error=str(exc),
                         actor=decision.provider.name,
+                        provider_retry_after_seconds=self._provider_retry_after_seconds(
+                            exc
+                        ),
                     )
                     self._record_event(
                         project,
@@ -9509,6 +9512,7 @@ class MediaForgeService:
         *,
         error: str,
         actor: str,
+        provider_retry_after_seconds: float | None = None,
     ) -> None:
         if job.attempts >= job.max_attempts:
             self._record_event(
@@ -9525,7 +9529,8 @@ class MediaForgeService:
                 },
             )
             return
-        delay = self.retry_policy.delay_for_attempt(job.attempts)
+        policy_delay = self.retry_policy.delay_for_attempt(job.attempts)
+        delay = max(policy_delay, provider_retry_after_seconds or 0)
         retry_at = datetime.now(timezone.utc) + timedelta(seconds=delay)
         self.jobs.schedule_retry(
             job.job_id,
@@ -9542,11 +9547,24 @@ class MediaForgeService:
                 "job_id": job.job_id,
                 "retry_at": retry_at.isoformat(),
                 "delay_seconds": delay,
+                "policy_delay_seconds": policy_delay,
+                "provider_retry_after_seconds": provider_retry_after_seconds,
                 "attempts": job.attempts,
                 "max_attempts": job.max_attempts,
                 "error": error,
             },
         )
+
+    @staticmethod
+    def _provider_retry_after_seconds(error: Exception) -> float | None:
+        raw_delay = getattr(error, "retry_after_seconds", None)
+        try:
+            delay = float(raw_delay)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(delay) or delay <= 0:
+            return None
+        return min(delay, float(24 * 60 * 60))
 
     def schedule_retry(
         self,

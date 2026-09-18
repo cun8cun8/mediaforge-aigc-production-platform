@@ -631,6 +631,12 @@ def _build_provider_for_mode(mode: str) -> ProviderBundle:
                 0.5,
                 minimum=0,
             )
+            http_retry_max_delay_seconds = _env_float(
+                "REPLICATE_HTTP_RETRY_MAX_DELAY_SECONDS",
+                15.0,
+                minimum=0,
+                maximum=300,
+            )
             timeout_seconds = _env_float(
                 "REPLICATE_TIMEOUT_SECONDS",
                 180.0,
@@ -681,6 +687,7 @@ def _build_provider_for_mode(mode: str) -> ProviderBundle:
             {
                 "http_retry_attempts": http_retry_attempts,
                 "http_retry_backoff_seconds": http_retry_backoff_seconds,
+                "http_retry_max_delay_seconds": http_retry_max_delay_seconds,
                 "timeout_seconds": timeout_seconds,
                 "cancel_request_timeout_seconds": cancel_request_timeout_seconds,
                 "poll_interval_seconds": poll_interval_seconds,
@@ -720,6 +727,7 @@ def _build_provider_for_mode(mode: str) -> ProviderBundle:
             poll_interval_seconds=poll_interval_seconds,
             http_retry_attempts=http_retry_attempts,
             http_retry_backoff_seconds=http_retry_backoff_seconds,
+            http_retry_max_delay_seconds=http_retry_max_delay_seconds,
             cancel_after_seconds=cancel_after_seconds,
             cancel_request_timeout_seconds=cancel_request_timeout_seconds,
             webhook_url_template=webhook_url_template,

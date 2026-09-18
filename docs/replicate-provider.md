@@ -16,6 +16,7 @@ The HTTP retry controls are configured with:
 
 - `REPLICATE_HTTP_RETRY_ATTEMPTS` (default `2`);
 - `REPLICATE_HTTP_RETRY_BACKOFF_SECONDS` (default `0.5`).
+- `REPLICATE_HTTP_RETRY_MAX_DELAY_SECONDS` (default `15`, valid range `0` to `300`);
 - `REPLICATE_TIMEOUT_SECONDS` (default `180`);
 - `REPLICATE_CANCEL_REQUEST_TIMEOUT_SECONDS` (default `15`, valid range `1` to `300`);
 - `REPLICATE_POLL_INTERVAL_SECONDS` (default `1`);
@@ -27,6 +28,13 @@ key is present. Network failures on polling and output downloads can be
 retried as `GET` requests; a non-idempotent `POST` is failed immediately.
 These controls are separate from the MediaForge Job retry policy, which
 creates a new execution attempt after the Provider call has failed.
+
+For a `429` response, the adapter parses the Provider's `Retry-After` header.
+It retries within the same Worker only when the requested wait is no greater
+than `REPLICATE_HTTP_RETRY_MAX_DELAY_SECONDS`. A longer wait is preserved on
+the raised Provider error, so the Job enters `RETRY_WAIT` using the larger of
+the local exponential backoff and the Provider's requested delay. This avoids
+holding a Worker lease during a long upstream rate-limit window.
 
 The default input builder is only a smoke-test shape. Every production model
 must provide a reviewed input builder because model input names and output

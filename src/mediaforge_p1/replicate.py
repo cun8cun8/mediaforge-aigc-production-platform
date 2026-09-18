@@ -7,6 +7,7 @@ import mimetypes
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Callable
@@ -21,6 +22,15 @@ from .media import sha256_file
 
 class ReplicateProviderError(RuntimeError):
     """Raised when the cloud prediction contract cannot be completed."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        retry_after_seconds: float | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
 
 
 InputBuilder = Callable[[GenerationSpec], dict[str, Any]]
@@ -48,6 +58,7 @@ class ReplicateVideoProvider:
     estimated_cost: float = 0.20
     http_retry_attempts: int = 2
     http_retry_backoff_seconds: float = 0.5
+    http_retry_max_delay_seconds: float = 15.0
     cancel_after_seconds: float | None = None
     cancel_request_timeout_seconds: float = 15.0
     webhook_url_template: str | None = None
@@ -62,6 +73,10 @@ class ReplicateVideoProvider:
             raise ValueError("http_retry_attempts must be >= 0")
         if self.http_retry_backoff_seconds < 0:
             raise ValueError("http_retry_backoff_seconds must be >= 0")
+        if not 0 <= self.http_retry_max_delay_seconds <= 300:
+            raise ValueError(
+                "http_retry_max_delay_seconds must be between 0 and 300 seconds"
+            )
         if self.cancel_after_seconds is not None and not (
             5 <= self.cancel_after_seconds <= 24 * 60 * 60
         ):
@@ -541,6 +556,9 @@ class ReplicateVideoProvider:
                 with urlopen(request, timeout=request_timeout_seconds) as response:
                     return response.read(), response.headers.get("Content-Type")
             except HTTPError as exc:
+                retry_after = self._retry_after_seconds(
+                    exc.headers.get("Retry-After") if exc.headers else None
+                )
                 if (
                     not self._is_retryable_http_error(
                         method,
@@ -549,9 +567,22 @@ class ReplicateVideoProvider:
                     )
                     or attempt >= attempts - 1
                 ):
-                    detail = getattr(exc, "reason", str(exc))
-                    raise ReplicateProviderError(
-                        f"Replicate request failed: {method} {url}: {detail}"
+                    raise self._request_error(
+                        method,
+                        url,
+                        exc,
+                        retry_after_seconds=retry_after,
+                    ) from exc
+                retry_delay = max(
+                    self.http_retry_backoff_seconds * (2**attempt),
+                    retry_after or 0,
+                )
+                if retry_delay > self.http_retry_max_delay_seconds:
+                    raise self._request_error(
+                        method,
+                        url,
+                        exc,
+                        retry_after_seconds=retry_after,
                     ) from exc
             except (URLError, TimeoutError) as exc:
                 retryable_network_error = method.upper() in {
@@ -564,10 +595,50 @@ class ReplicateVideoProvider:
                     raise ReplicateProviderError(
                         f"Replicate request failed: {method} {url}: {detail}"
                     ) from exc
-            time.sleep(self.http_retry_backoff_seconds * (2**attempt))
+                retry_delay = self.http_retry_backoff_seconds * (2**attempt)
+            time.sleep(retry_delay)
         raise ReplicateProviderError(
             f"Replicate request failed: {method} {url}: retry limit reached"
         )
+
+    @staticmethod
+    def _request_error(
+        method: str,
+        url: str,
+        error: HTTPError,
+        *,
+        retry_after_seconds: float | None,
+    ) -> ReplicateProviderError:
+        detail = getattr(error, "reason", str(error))
+        retry_detail = (
+            f"; retry after {math.ceil(retry_after_seconds)}s"
+            if retry_after_seconds is not None
+            else ""
+        )
+        return ReplicateProviderError(
+            f"Replicate request failed: {method} {url}: {detail}{retry_detail}",
+            retry_after_seconds=retry_after_seconds,
+        )
+
+    @staticmethod
+    def _retry_after_seconds(value: str | None) -> float | None:
+        """Read an RFC 7231 Retry-After value without trusting unbounded delays."""
+        raw = (value or "").strip()
+        if not raw:
+            return None
+        try:
+            seconds = float(raw)
+        except ValueError:
+            try:
+                retry_at = parsedate_to_datetime(raw)
+            except (TypeError, ValueError):
+                return None
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=timezone.utc)
+            seconds = (retry_at - datetime.now(timezone.utc)).total_seconds()
+        if not math.isfinite(seconds) or seconds <= 0:
+            return None
+        return min(math.ceil(seconds), 24 * 60 * 60)
 
     @staticmethod
     def _idempotency_key(job_id: str) -> str:

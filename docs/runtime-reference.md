@@ -408,6 +408,12 @@ native-webhook Job, MediaForge requests Replicate's prediction-specific
 cancellation URL before recording the terminal local state. Non-idempotent
 `POST` requests are never retried automatically.
 
+Replicate `429` responses honor `Retry-After`: waits up to
+`REPLICATE_HTTP_RETRY_MAX_DELAY_SECONDS` are retried inside the existing
+attempt; longer waits become a durable Job retry plan. The audit event records
+the policy delay, the Provider delay, and the chosen scheduled delay so a
+production operator can distinguish a service quota from an internal failure.
+
 Set `MEDIAFORGE_WORKER_EXECUTION_MODE=replicate-webhook` together with
 `REPLICATE_WEBHOOK_URL_TEMPLATE` when a public HTTPS control plane should
 receive native Replicate completion events. The URL template must contain both

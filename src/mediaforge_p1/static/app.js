@@ -264,6 +264,7 @@ const PROVIDER_DETAIL_LABELS = {
   timeout_seconds: "超时时间",
   cancel_request_timeout_seconds: "取消请求超时",
   poll_interval_seconds: "轮询间隔",
+  http_retry_max_delay_seconds: "服务商重试最大等待",
   cancel_after_seconds: "远端取消期限",
   cancel_after_header: "远端取消请求头",
   webhook_url_template_configured: "Replicate 回调地址模板已配置",

@@ -279,6 +279,21 @@ class AlwaysFailProvider:
         raise RuntimeError("primary provider unavailable")
 
 
+class RateLimitedProvider:
+    name = "rate-limited-provider"
+
+    def supports(self, capability: Capability) -> bool:
+        return capability == Capability.IMAGE_TO_VIDEO
+
+    def estimate_cost(self, _spec: GenerationSpec) -> float:
+        return 0.2
+
+    def generate(self, _spec: GenerationSpec, *, job_id: str, output_dir: Path):
+        error = RuntimeError("provider request rate limit exceeded")
+        error.retry_after_seconds = 45
+        raise error
+
+
 def test_generation_fails_over_to_a_secondary_provider(
     tmp_path: Path,
     monkeypatch,
@@ -354,6 +369,49 @@ def test_generation_fails_over_to_a_secondary_provider(
         for event in client.get(f"/projects/{project_id}/audit").json()["events"]
     }
     assert "shot.provider_failover" in audit_actions
+
+
+def test_provider_retry_after_becomes_a_scheduled_job_backoff(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client = make_client(tmp_path, monkeypatch)
+    service = client.app.state.mediaforge
+    provider = RateLimitedProvider()
+    service.provider = provider
+    service.router = ProviderRouter(
+        [ProviderRegistration(provider=provider, priority=1)]
+    )
+    service.retry_policy = RetryPolicy(max_attempts=3, base_delay_seconds=5)
+    service.set_provider_status(
+        {
+            "mode": "custom",
+            "provider": provider.name,
+            "configured": True,
+            "message": "Rate-limited Provider is active.",
+            "capabilities": ["image_to_video"],
+        }
+    )
+    project_id = "api_provider_retry_after"
+    assert client.post("/projects", json=make_brief(project_id)).status_code == 201
+    plan = client.post(f"/projects/{project_id}/plan").json()
+    shot_id = plan["shots"][0]["shot"]["shot_id"]
+
+    failed = client.post(f"/projects/{project_id}/shots/{shot_id}/submit")
+
+    assert failed.status_code == 422
+    job_id = service.projects[project_id].shots[shot_id].current_job_id
+    assert job_id
+    job = service.jobs.get(job_id)
+    assert job.status == JobStatus.RETRY_WAIT
+    retry_event = next(
+        event
+        for event in reversed(service.projects[project_id].audit_events)
+        if event.action == "job.retry_scheduled"
+    )
+    assert retry_event.details["delay_seconds"] == 45
+    assert retry_event.details["policy_delay_seconds"] == 5
+    assert retry_event.details["provider_retry_after_seconds"] == 45
 
 
 def test_api_runs_complete_project_loop_with_batch_operations(

@@ -67,6 +67,7 @@ $env:REPLICATE_POLL_INTERVAL_SECONDS = "1"
 $env:REPLICATE_CANCEL_AFTER_SECONDS = "180"
 $env:REPLICATE_HTTP_RETRY_ATTEMPTS = "2"
 $env:REPLICATE_HTTP_RETRY_BACKOFF_SECONDS = "0.5"
+$env:REPLICATE_HTTP_RETRY_MAX_DELAY_SECONDS = "15"
 ```
 
 Keep the model version immutable. The adapter sends a per-Job idempotency key, uses bounded retries for transient failures, and requests a remote prediction deadline through `Cancel-After`. If local polling reaches its timeout or an operator cancels a bound native-webhook Job, it requests the prediction's `urls.cancel` endpoint with the independent bounded `REPLICATE_CANCEL_REQUEST_TIMEOUT_SECONDS` timeout. It does not expose the token in diagnostics. See [Replicate Provider Adapter](replicate-provider.md).

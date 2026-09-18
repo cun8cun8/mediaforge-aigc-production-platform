@@ -149,6 +149,9 @@ def build_provider(
             http_retry_backoff_seconds=float(
                 os.getenv("REPLICATE_HTTP_RETRY_BACKOFF_SECONDS", "0.5")
             ),
+            http_retry_max_delay_seconds=float(
+                os.getenv("REPLICATE_HTTP_RETRY_MAX_DELAY_SECONDS", "15")
+            ),
             timeout_seconds=float(os.getenv("REPLICATE_TIMEOUT_SECONDS", "180")),
             cancel_request_timeout_seconds=float(
                 os.getenv("REPLICATE_CANCEL_REQUEST_TIMEOUT_SECONDS", "15")

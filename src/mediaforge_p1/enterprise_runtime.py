@@ -9,6 +9,7 @@ import threading
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
+from math import ceil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,16 @@ class EnterpriseConfigurationError(ValueError):
 
 class ControlPlaneUnavailable(EnterpriseConfigurationError):
     """Raised when this API instance is not the current control-plane writer."""
+
+
+@dataclass(frozen=True)
+class RateLimitDecision:
+    """One atomic rate-limit check with a client-safe recovery deadline."""
+
+    allowed: bool
+    remaining: int
+    retry_after_seconds: int | None = None
+    reset_at_epoch: int | None = None
 
 
 class SlidingWindowRateLimiter:
@@ -57,20 +68,35 @@ class SlidingWindowRateLimiter:
         return os.getenv("MEDIAFORGE_RATE_LIMIT_ENABLED", "true").strip().lower() not in {"0", "false", "no"}
 
     def allow(self, key: str, *, now: float | None = None) -> tuple[bool, int]:
+        decision = self.check(key, now=now)
+        return decision.allowed, decision.remaining
+
+    def check(self, key: str, *, now: float | None = None) -> RateLimitDecision:
         if not self.enabled:
-            return True, self.limit
+            return RateLimitDecision(allowed=True, remaining=self.limit)
         current = time.time() if now is None else now
         with self._lock:
             if os.getenv("MEDIAFORGE_RATE_LIMIT_BACKEND", "sqlite").strip().lower() == "sqlite":
-                return self._allow_sqlite(key, current)
+                return self._check_sqlite(key, current)
             bucket = self._windows[key]
             cutoff = current - self.window_seconds
             while bucket and bucket[0] <= cutoff:
                 bucket.popleft()
             if len(bucket) >= self.limit:
-                return False, 0
+                reset_at = bucket[0] + self.window_seconds
+                return RateLimitDecision(
+                    allowed=False,
+                    remaining=0,
+                    retry_after_seconds=max(1, ceil(reset_at - current)),
+                    reset_at_epoch=ceil(reset_at),
+                )
             bucket.append(current)
-            return True, self.limit - len(bucket)
+            reset_at = bucket[0] + self.window_seconds
+            return RateLimitDecision(
+                allowed=True,
+                remaining=self.limit - len(bucket),
+                reset_at_epoch=ceil(reset_at),
+            )
 
     def status_view(self) -> dict[str, Any]:
         return {
@@ -81,7 +107,7 @@ class SlidingWindowRateLimiter:
             "path": str(self.path),
         }
 
-    def _allow_sqlite(self, key: str, current: float) -> tuple[bool, int]:
+    def _check_sqlite(self, key: str, current: float) -> RateLimitDecision:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(self.path, timeout=5, isolation_level=None) as connection:
             # Serialize the read-check-write sequence across API processes.
@@ -90,13 +116,28 @@ class SlidingWindowRateLimiter:
             connection.execute("CREATE INDEX IF NOT EXISTS rate_window_bucket_time ON rate_window(bucket, occurred_at)")
             cutoff = current - self.window_seconds
             connection.execute("DELETE FROM rate_window WHERE occurred_at <= ?", (cutoff,))
-            count = int(connection.execute("SELECT COUNT(*) FROM rate_window WHERE bucket = ?", (key,)).fetchone()[0])
+            count, oldest = connection.execute(
+                "SELECT COUNT(*), MIN(occurred_at) FROM rate_window WHERE bucket = ?",
+                (key,),
+            ).fetchone()
+            count = int(count)
             if count >= self.limit:
+                reset_at = float(oldest) + self.window_seconds
                 connection.rollback()
-                return False, 0
+                return RateLimitDecision(
+                    allowed=False,
+                    remaining=0,
+                    retry_after_seconds=max(1, ceil(reset_at - current)),
+                    reset_at_epoch=ceil(reset_at),
+                )
             connection.execute("INSERT INTO rate_window(bucket, occurred_at) VALUES (?, ?)", (key, current))
             connection.commit()
-            return True, self.limit - count - 1
+            reset_at = (float(oldest) if oldest is not None else current) + self.window_seconds
+            return RateLimitDecision(
+                allowed=True,
+                remaining=self.limit - count - 1,
+                reset_at_epoch=ceil(reset_at),
+            )
 
 
 class BillingLedger:

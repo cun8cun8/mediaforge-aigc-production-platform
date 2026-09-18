@@ -622,10 +622,15 @@ def test_rate_limit_returns_retry_headers_and_isolates_anonymous_clients(tmp_pat
         read_rejected = first.get("/providers/status")
         assert read_rejected.status_code == 429
         assert read_rejected.headers["X-RateLimit-Limit"] == "3"
+        assert int(read_rejected.headers["X-RateLimit-Reset"]) > 0
+        assert read_rejected.json()["rate_limit"]["retry_after_seconds"] == int(
+            read_rejected.headers["Retry-After"]
+        )
         assert first.get("/health").status_code == 200
         assert first.get("/health").headers["X-RateLimit-Remaining"] == "0"
         rejected = first.get("/health")
         assert rejected.status_code == 429
         assert int(rejected.headers["Retry-After"]) > 0
+        assert int(rejected.headers["X-RateLimit-Reset"]) > 0
     with TestClient(app, client=("client-b", 1001)) as second:
         assert second.get("/health").status_code == 200

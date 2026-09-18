@@ -872,15 +872,24 @@ def create_app(output_root: Path | None = None) -> FastAPI:
                 else f"ip:{request.client.host if request.client else 'anonymous'}"
             )
             rate_key = f"{rate_key}:{'read' if read_only_request else 'write'}"
-            allowed, remaining = limiter.allow(rate_key)
-            if not allowed:
+            rate_limit = limiter.check(rate_key)
+            if not rate_limit.allowed:
                 response = JSONResponse(
                     status_code=429,
-                    content={"detail": "request rate limit exceeded"},
+                    content={
+                        "detail": "request rate limit exceeded",
+                        "rate_limit": {
+                            "limit": limiter.limit,
+                            "remaining": rate_limit.remaining,
+                            "retry_after_seconds": rate_limit.retry_after_seconds,
+                            "reset_at": rate_limit.reset_at_epoch,
+                        },
+                    },
                     headers={
-                        "Retry-After": str(limiter.window_seconds),
+                        "Retry-After": str(rate_limit.retry_after_seconds or 1),
                         "X-RateLimit-Limit": str(limiter.limit),
                         "X-RateLimit-Remaining": "0",
+                        "X-RateLimit-Reset": str(rate_limit.reset_at_epoch or 0),
                     },
                 )
             else:
@@ -909,7 +918,11 @@ def create_app(output_root: Path | None = None) -> FastAPI:
                 else:
                     response = await call_next(request)
                 response.headers["X-RateLimit-Limit"] = str(limiter.limit)
-                response.headers["X-RateLimit-Remaining"] = str(remaining)
+                response.headers["X-RateLimit-Remaining"] = str(rate_limit.remaining)
+                if rate_limit.reset_at_epoch is not None:
+                    response.headers["X-RateLimit-Reset"] = str(
+                        rate_limit.reset_at_epoch
+                    )
         except PlanningBusy as exc:
             response = JSONResponse(status_code=409, content={'detail': str(exc)})
         except ControlPlaneUnavailable as exc:
