@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from mediaforge_p1.alerts import (
@@ -179,6 +181,50 @@ def test_service_and_api_expose_operations_alerts(tmp_path, monkeypatch) -> None
         metrics = client.get("/metrics").text
         assert "mediaforge_operations_alerts_active" in metrics
         assert "mediaforge_provider_circuit_open" in metrics
+
+
+def test_operations_alert_acknowledgement_is_fingerprinted_and_persisted(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("MEDIAFORGE_ALERT_QUEUE_DEPTH", "1")
+    service = MediaForgeService(tmp_path)
+    service.create_project(CreativeBrief(
+        project_id="alert_ack",
+        title="Alert acknowledgement",
+        premise="An operator takes ownership of a live alert.",
+        genre="drama",
+        style="cinema",
+        duration_seconds=30,
+        budget=2,
+        characters=["A", "B"],
+    ))
+    plan = service.generate_plan("alert_ack")
+    service.enqueue_shot("alert_ack", plan["shots"][0]["shot"]["shot_id"])
+
+    acknowledged = service.acknowledge_operations_alert(
+        "QUEUE_DEPTH_HIGH",
+        actor="ops-admin",
+        note="已分派给队列值班人员。",
+    )
+    alert = next(item for item in acknowledged["alerts"] if item["code"] == "QUEUE_DEPTH_HIGH")
+    assert alert["acknowledged"] is True
+    assert alert["acknowledged_by"] == "ops-admin"
+    assert alert["acknowledgement_note"] == "已分派给队列值班人员。"
+    assert acknowledged["acknowledged_count"] == 1
+
+    service.operations_alert_settings = replace(
+        service.operations_alert_settings,
+        queue_depth=0,
+    )
+    changed = service.operations_alerts()
+    changed_alert = next(item for item in changed["alerts"] if item["code"] == "QUEUE_DEPTH_HIGH")
+    assert changed_alert["acknowledged"] is False
+
+    restored = MediaForgeService(tmp_path)
+    restored_alert = next(
+        item
+        for item in restored.operations_alerts()["alerts"]
+        if item["code"] == "QUEUE_DEPTH_HIGH"
+    )
+    assert restored_alert["acknowledged"] is True
 
 
 def test_leased_control_plane_without_postgres_refuses_traffic(tmp_path, monkeypatch) -> None:

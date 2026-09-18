@@ -182,6 +182,12 @@ budget policy. Enable `MEDIAFORGE_ALERT_REQUIRE_PRODUCTION_READY=true` only in a
 real production control plane; it intentionally treats Mock mode and missing
 enterprise dependencies as critical.
 
+管理员可以通过 `POST /ops/alerts/{alert_code}/acknowledge` 接手当前告警。系统会把
+告警当前的代码、来源、观测值和阈值计算为指纹，并持久化确认时间、已认证操作者和备注。
+这不是永久静默：只要观测值、阈值、来源或代码变化，指纹就会失配，告警重新显示为待处理。
+`GET /ops/alerts` 会返回 `acknowledged`、`acknowledged_by`、`acknowledged_at`、
+`acknowledgement_note` 和当前确认数量。启用 API Key 或 OIDC 后，操作者强制取自管理员
+身份，不能使用请求体伪造其他人。
 ## Monitoring And Alert Routing
 
 `docker-compose.observability.yml` is a production-facing Compose overlay that

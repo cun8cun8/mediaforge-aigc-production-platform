@@ -106,6 +106,14 @@ When API-key or OIDC authentication is enabled, a recovery record uses the
 authenticated subject as its actor; a client-provided actor field cannot
 impersonate another operator.
 
+Operations alerts can be acknowledged by an administrator with
+POST /ops/alerts/{alert_code}/acknowledge. The acknowledgement stores the
+current alert fingerprint, timestamp, authenticated actor and an optional
+short note in the durable state snapshot. It is intentionally not a permanent
+mute: if the alert's observed value, threshold, source or code changes, the
+fingerprint no longer matches and the alert becomes actionable again. Review
+the current state with GET /ops/alerts; the response includes acknowledged,
+acknowledged_by, acknowledged_at and acknowledgement_note.
 ### Replicate Native Webhook Worker
 
 Use this only when the API is reachable on a public HTTPS URL. The Worker

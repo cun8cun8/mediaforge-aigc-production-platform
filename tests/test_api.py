@@ -3648,6 +3648,8 @@ def test_studio_static_assets_are_served(tmp_path: Path, monkeypatch) -> None:
     assert "导出台账" in html.text
     assert "校验当前" in html.text
     assert "导入台账" in html.text
+    assert "运营告警" in html.text
+    assert "acknowledge-ops-alert" in script.text
     assert "服务商中心" in html.text
     assert "运行诊断" in html.text
     assert "故事规划 Agent" in html.text
@@ -4165,6 +4167,16 @@ def test_required_auth_enforces_roles_and_tenant_isolation(
         headers=viewer_a,
         json={},
     ).status_code == 403
+    assert client.post(
+        "/ops/alerts/QUEUE_DEPTH_HIGH/acknowledge",
+        headers=viewer_a,
+        json={},
+    ).status_code == 403
+    assert client.post(
+        "/ops/alerts/QUEUE_DEPTH_HIGH/acknowledge",
+        headers=admin,
+        json={},
+    ).status_code == 422
     service = client.app.state.mediaforge
     provider = service.provider
     service.router = ProviderRouter(

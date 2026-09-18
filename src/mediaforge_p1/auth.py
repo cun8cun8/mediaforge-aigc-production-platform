@@ -426,6 +426,16 @@ class AuthManager:
                 "provider circuit recovery requires an admin role",
                 status_code=403,
             )
+        if (
+            path.startswith("/ops/alerts/")
+            and path.endswith("/acknowledge")
+            and method.upper() == "POST"
+            and principal.role != "admin"
+        ):
+            raise AuthenticationError(
+                "operations alert acknowledgement requires an admin role",
+                status_code=403,
+            )
         if path == "/providers/warmup" and method.upper() == "POST" and principal.role != "admin":
             raise AuthenticationError("provider warmup requires an admin role", status_code=403)
         if path == "/planning/probe" and method.upper() == "POST" and principal.role != "admin":
@@ -436,6 +446,12 @@ class AuthManager:
         if (
             path.startswith("/providers/")
             and path.endswith("/circuit/recover")
+            and method.upper() == "POST"
+        ):
+            required_role = "admin"
+        elif (
+            path.startswith("/ops/alerts/")
+            and path.endswith("/acknowledge")
             and method.upper() == "POST"
         ):
             required_role = "admin"

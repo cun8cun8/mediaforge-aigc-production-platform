@@ -1255,6 +1255,7 @@ function renderOverview() {
   $("overviewAlertsNote").textContent = firstAlert
     ? [firstAlert.code, localizeOperationsAlertSummary(firstAlert)].join(" · ")
     : alertGrade === "HEALTHY" ? "队列、预算、Provider 与 Worker 指标正常。" : "正在计算运营告警。";
+  renderOperationsAlerts(alerts);
   const enterprise = state.enterpriseStatus || {};
   const billing = state.billingSummary || {};
   $("overviewStateBackend").textContent = enterprise.database?.backend || "未知";
@@ -1283,6 +1284,21 @@ function localizeOperationsAlertSummary(alert) {
     PRODUCTION_READINESS_BLOCKED: "生产就绪状态不满足严格上线要求。",
   };
   return summaries[String(alert?.code || "")] || String(alert?.summary || "运行告警需要处理。");
+}
+
+function renderOperationsAlerts(alerts) {
+  const rows = Array.isArray(alerts?.alerts) ? alerts.alerts : [];
+  $("operationsAlertList").innerHTML = rows.length
+    ? rows.map((alert) => {
+        const status = alert.acknowledged
+          ? "已由 " + escapeHtml(alert.acknowledged_by || "管理员") + " 确认 · " + escapeHtml(formatTimestamp(alert.acknowledged_at))
+          : "等待管理员接手处理。";
+        const button = alert.acknowledged
+          ? '<button class="button button-quiet" type="button" disabled>已确认</button>'
+          : '<button class="button button-quiet" type="button" data-action="acknowledge-ops-alert" data-alert-code="' + escapeHtml(alert.code) + '">确认处理</button>';
+        return '<div class="policy-row ' + (alert.severity === "critical" ? "is-blocked" : "is-warning") + '"><div><strong>' + escapeHtml(alert.code) + ' · ' + escapeHtml(localizeOperationsAlertSummary(alert)) + '</strong><span>' + status + '</span></div>' + button + '</div>';
+      }).join("")
+    : '<div class="policy-row"><strong>当前没有运营告警</strong><span>队列、预算、Worker 和 Provider 状态正常。</span></div>';
 }
 
 function renderDetailPanels() {
@@ -1646,6 +1662,24 @@ async function loadProjectList() {
 
 function waitFor(milliseconds) {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+async function acknowledgeOperationsAlert(alertCode, button) {
+  if (!alertCode) return;
+  setBusy(button, true, "确认中");
+  try {
+    state.operationsAlerts = await request(
+      "/ops/alerts/" + encodeURIComponent(alertCode) + "/acknowledge",
+      {method: "POST", body: JSON.stringify({actor: "studio-operations"})},
+    );
+    renderOverview();
+    logEvent("已确认运营告警：" + alertCode, "muted");
+  } catch (error) {
+    logEvent(error.message, "muted");
+    alert(error.message);
+  } finally {
+    setBusy(button, false);
+  }
 }
 
 function handleProjectEvent(projectId, id, eventName, data) {
@@ -6655,6 +6689,10 @@ document.addEventListener("click", (event) => {
   const target = event.target.closest("[data-action]");
   if (!target) return;
   event.preventDefault();
+  if (target.dataset.action === "acknowledge-ops-alert") {
+    acknowledgeOperationsAlert(target.dataset.alertCode, target);
+    return;
+  }
   if (target.dataset.action === "workflow-open-stage") {
     setActiveTab(target.dataset.stageTab || "inspector");
     return;

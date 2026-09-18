@@ -473,6 +473,13 @@ class ProviderCircuitRecoveryRequest(BaseModel):
     actor: str = Field(default="provider-operations", min_length=1, max_length=120)
 
 
+class OperationsAlertAcknowledgeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    actor: str = Field(default="operations-operator", min_length=1, max_length=120)
+    note: str = Field(default="", max_length=2000)
+
+
 class ProjectMemberRequest(BaseModel):
     subject: str = Field(min_length=1, max_length=160)
     role: Literal["owner", "viewer", "editor", "reviewer", "publisher"] = "viewer"
@@ -995,6 +1002,23 @@ def create_app(output_root: Path | None = None) -> FastAPI:
     @app.get("/ops/alerts")
     def operations_alerts() -> dict[str, Any]:
         return service.operations_alerts()
+
+    @app.post("/ops/alerts/{alert_code}/acknowledge")
+    def acknowledge_operations_alert(
+        alert_code: str,
+        payload: OperationsAlertAcknowledgeRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        try:
+            principal = request.state.principal
+            actor = principal.subject if principal.authenticated else payload.actor
+            return service.acknowledge_operations_alert(
+                alert_code,
+                actor=actor,
+                note=payload.note,
+            )
+        except WorkflowError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/llm/status")
     def llm_status() -> dict[str, Any]:

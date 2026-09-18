@@ -263,6 +263,7 @@ class MediaForgeService:
         self.projects: dict[str, ProjectRuntime] = {}
         self.workers: dict[str, dict[str, Any]] = {}
         self.provider_operations: list[dict[str, Any]] = []
+        self.operations_alert_acknowledgements: dict[str, dict[str, Any]] = {}
         self.retry_policy = RetryPolicy.from_env()
         self.job_lease_policy = JobLeasePolicy.from_env()
         self.jobs = JobStore(max_attempts=self.retry_policy.max_attempts)
@@ -365,6 +366,59 @@ class MediaForgeService:
     def lipsync_status(self) -> dict[str, Any]:
         return self.lipsync.status_view()
 
+    @staticmethod
+    def _operations_alert_fingerprint(alert: dict[str, Any]) -> str:
+        payload = {
+            "code": alert.get("code"),
+            "source": alert.get("source"),
+            "observed": alert.get("observed"),
+            "threshold": alert.get("threshold"),
+        }
+        return hashlib.sha256(
+            json.dumps(
+                payload,
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+        ).hexdigest()
+
+    def _annotate_operations_alerts(
+        self,
+        report: dict[str, Any],
+    ) -> dict[str, Any]:
+        acknowledged_count = 0
+        for alert in report.get("alerts", []):
+            if not isinstance(alert, dict):
+                continue
+            code = str(alert.get("code") or "")
+            acknowledgement = self.operations_alert_acknowledgements.get(code)
+            acknowledged = bool(
+                acknowledgement
+                and acknowledgement.get("fingerprint")
+                == self._operations_alert_fingerprint(alert)
+            )
+            alert["acknowledged"] = acknowledged
+            alert["acknowledged_at"] = (
+                acknowledgement.get("acknowledged_at")
+                if acknowledged
+                else None
+            )
+            alert["acknowledged_by"] = (
+                acknowledgement.get("actor")
+                if acknowledged
+                else None
+            )
+            alert["acknowledgement_note"] = (
+                acknowledgement.get("note")
+                if acknowledged
+                else None
+            )
+            acknowledged_count += int(acknowledged)
+        report["acknowledged_count"] = acknowledged_count
+        return report
+
     def operations_alerts(self) -> dict[str, Any]:
         """Evaluate operator-facing alerts from current persisted state and metrics."""
         cached_readiness = self._production_readiness_cache
@@ -374,7 +428,7 @@ class MediaForgeService:
             and isinstance(cached_readiness, dict)
             else {"production_ready": not self.operations_alert_settings.require_production_ready}
         )
-        return evaluate_operations_alerts(
+        report = evaluate_operations_alerts(
             settings=self.operations_alert_settings,
             studio_metrics=self.studio_metrics(),
             runtime_metrics=self.runtime_metrics_view(),
@@ -382,6 +436,44 @@ class MediaForgeService:
             production_readiness=readiness,
             provider_circuits=self.provider_circuit_status(),
         )
+        return self._annotate_operations_alerts(report)
+
+    def acknowledge_operations_alert(
+        self,
+        alert_code: str,
+        *,
+        actor: str,
+        note: str = "",
+    ) -> dict[str, Any]:
+        clean_code = alert_code.strip().upper()
+        if not clean_code:
+            raise WorkflowError("alert code is required")
+        clean_actor = actor.strip()
+        if not clean_actor:
+            raise WorkflowError("alert acknowledgement actor is required")
+        with self.control_plane_mutation_guard():
+            report = self.operations_alerts()
+            alert = next(
+                (
+                    item
+                    for item in report.get("alerts", [])
+                    if item.get("code") == clean_code
+                ),
+                None,
+            )
+            if alert is None:
+                raise WorkflowError(
+                    f"operations alert is not active: {clean_code}"
+                )
+            self.operations_alert_acknowledgements[clean_code] = {
+                "alert_code": clean_code,
+                "fingerprint": self._operations_alert_fingerprint(alert),
+                "acknowledged_at": datetime.now(timezone.utc).isoformat(),
+                "actor": clean_actor,
+                "note": note.strip()[:2000],
+            }
+            self._persist()
+            return self.operations_alerts()
 
     def operations_alerts_prometheus(self) -> str:
         return operations_alerts_prometheus(self.operations_alerts())
@@ -481,6 +573,7 @@ class MediaForgeService:
         self.projects = {}
         self.workers = {}
         self.provider_operations = []
+        self.operations_alert_acknowledgements = {}
         self.jobs = JobStore(max_attempts=self.retry_policy.max_attempts)
         self.license_registry = LicenseRegistry.from_env()
         self.license_registry_metadata = {
@@ -16688,6 +16781,9 @@ class MediaForgeService:
                 "workers": copy.deepcopy(self.workers),
                 "provider_circuit_breaker": self.router.circuit_breaker.export_state(),
                 "provider_operations": copy.deepcopy(self.provider_operations),
+                "operations_alert_acknowledgements": copy.deepcopy(
+                    self.operations_alert_acknowledgements
+                ),
             }
             serialized = json.dumps(payload, ensure_ascii=True, indent=2)
             if self.state_backend == "postgres":
@@ -16763,6 +16859,16 @@ class MediaForgeService:
                     for item in stored_provider_operations[-200:]
                     if isinstance(item, dict)
                 ]
+            stored_alert_acknowledgements = payload.get(
+                "operations_alert_acknowledgements",
+                {},
+            )
+            if isinstance(stored_alert_acknowledgements, dict):
+                self.operations_alert_acknowledgements = {
+                    str(code): copy.deepcopy(record)
+                    for code, record in stored_alert_acknowledgements.items()
+                    if isinstance(record, dict)
+                }
             self.jobs.restore(payload.get("jobs", []))
             stored_workers = payload.get("workers", {})
             if isinstance(stored_workers, dict):
