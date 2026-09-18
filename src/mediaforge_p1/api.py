@@ -467,6 +467,12 @@ class ProviderCallbackRequest(BaseModel):
     external_reference: str | None = Field(default=None, min_length=1, max_length=240)
 
 
+class ProviderCircuitRecoveryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    actor: str = Field(default="provider-operations", min_length=1, max_length=120)
+
+
 class ProjectMemberRequest(BaseModel):
     subject: str = Field(min_length=1, max_length=160)
     role: Literal["owner", "viewer", "editor", "reviewer", "publisher"] = "viewer"
@@ -1330,6 +1336,19 @@ def create_app(output_root: Path | None = None) -> FastAPI:
     @app.get("/providers/circuits")
     def provider_circuits() -> dict:
         return service.provider_circuit_status()
+
+    @app.post("/providers/{provider_name}/circuit/recover")
+    def recover_provider_circuit(
+        provider_name: str,
+        payload: ProviderCircuitRecoveryRequest,
+    ) -> dict[str, Any]:
+        try:
+            return service.recover_provider_circuit(
+                provider_name,
+                actor=payload.actor,
+            )
+        except WorkflowError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post("/providers/warmup")
     def provider_warmup() -> dict[str, Any]:

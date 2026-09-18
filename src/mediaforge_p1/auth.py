@@ -416,6 +416,16 @@ class AuthManager:
             return
         if path == "/auth/logout":
             return
+        if (
+            path.startswith("/providers/")
+            and path.endswith("/circuit/recover")
+            and method.upper() == "POST"
+            and principal.role != "admin"
+        ):
+            raise AuthenticationError(
+                "provider circuit recovery requires an admin role",
+                status_code=403,
+            )
         if path == "/providers/warmup" and method.upper() == "POST" and principal.role != "admin":
             raise AuthenticationError("provider warmup requires an admin role", status_code=403)
         if path == "/planning/probe" and method.upper() == "POST" and principal.role != "admin":
@@ -423,7 +433,13 @@ class AuthManager:
         if path in {"/billing/events", "/billing/settlements"} and method.upper() == "POST" and principal.role not in {"admin", "provider"}:
             raise AuthenticationError("billing ingestion requires an admin or provider role", status_code=403)
         required_role = "viewer"
-        if path == "/providers/warmup" and method.upper() == "POST":
+        if (
+            path.startswith("/providers/")
+            and path.endswith("/circuit/recover")
+            and method.upper() == "POST"
+        ):
+            required_role = "admin"
+        elif path == "/providers/warmup" and method.upper() == "POST":
             required_role = "admin"
         elif path == "/planning/probe" and method.upper() == "POST":
             required_role = "admin"

@@ -535,6 +535,10 @@ input:focus, textarea:focus, select:focus {
 .provider-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 18px 0 10px; }
 .provider-actions .button { flex: 1 1 0; min-width: 0; padding-left: 8px; padding-right: 8px; }
 .provider-actions .mini-label { flex: 1 0 100%; text-align: right; }
+.provider-recovery-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; margin: 8px 0 14px; }
+.provider-recovery-actions label { min-width: 0; color: var(--muted); font-size: 10px; font-weight: 760; }
+.provider-recovery-actions select { display: block; width: 100%; min-width: 0; margin-top: 5px; }
+.provider-recovery-actions .mini-label { grid-column: 1 / -1; min-height: 16px; }
 .provider-summary { grid-template-columns: repeat(5, 1fr); margin: 0 0 14px; }
 .provider-message { padding: 10px 12px; border-left: 3px solid var(--coral); background: #fff8f4; color: #6b5b54; font-size: 11px; line-height: 1.45; }
 .provider-block { margin-top: 18px; }

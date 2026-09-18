@@ -207,6 +207,29 @@ class ProviderCircuitBreaker:
             result["recovered"] = recovered
             return result
 
+    def manual_recover(
+        self,
+        provider_name: str,
+        *,
+        now: datetime | None = None,
+    ) -> dict[str, object]:
+        """Close a circuit after an operator has independently verified health."""
+        clean_name = self._clean_name(provider_name)
+        recovered_at = now or self._now()
+        with self._lock:
+            state = self._state_for(clean_name)
+            previous_state = state.state
+            state.consecutive_failures = 0
+            state.state = "CLOSED"
+            state.opened_at = None
+            state.open_until = None
+            state.last_error = None
+            state.last_success_at = recovered_at
+            result = self._snapshot_locked(clean_name, state, now=recovered_at)
+            result["manual_recovery"] = previous_state != "CLOSED"
+            result["previous_state"] = previous_state
+            return result
+
     def snapshot(
         self,
         provider_name: str,

@@ -489,6 +489,81 @@ def test_open_provider_circuit_routes_later_shots_to_a_fallback(
     assert "provider.circuit_opened" in audit_actions
 
 
+def test_provider_circuit_recovery_requires_an_open_circuit_and_active_health(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client = make_client(tmp_path, monkeypatch)
+    service = client.app.state.mediaforge
+    provider = service.provider
+    service.router = ProviderRouter(
+        [ProviderRegistration(provider=provider, priority=1)],
+        circuit_breaker=ProviderCircuitBreaker(
+            ProviderCircuitBreakerSettings(failure_threshold=1, open_seconds=60)
+        ),
+    )
+    circuit = service.router.circuit_breaker
+
+    closed = client.post(
+        "/providers/mock-provider/circuit/recover",
+        json={"actor": "operations-test"},
+    )
+    assert closed.status_code == 422
+    assert "not open" in closed.json()["detail"]
+
+    circuit.record_failure("mock-provider", error="simulated outage")
+    recovered = client.post(
+        "/providers/mock-provider/circuit/recover",
+        json={"actor": "operations-test"},
+    )
+    assert recovered.status_code == 200
+    assert recovered.json()["health"]["probe"] == "active"
+    assert recovered.json()["circuit"]["previous_state"] == "OPEN"
+    assert recovered.json()["circuit"]["state"] == "CLOSED"
+    assert client.get("/providers/circuits").json()["providers"][0]["state"] == "CLOSED"
+
+    class UnhealthyProvider(MockProvider):
+        name = "unhealthy-provider"
+
+        def health_check(self) -> dict:
+            return {
+                "reachable": False,
+                "healthy": False,
+                "message": "Provider endpoint is unavailable.",
+                "latency_ms": 1.0,
+            }
+
+    unhealthy = UnhealthyProvider()
+    service.provider = unhealthy
+    service.router = ProviderRouter(
+        [ProviderRegistration(provider=unhealthy, priority=1)],
+        circuit_breaker=ProviderCircuitBreaker(
+            ProviderCircuitBreakerSettings(failure_threshold=1, open_seconds=60)
+        ),
+    )
+    service.set_provider_status(
+        {
+            "mode": "custom",
+            "provider": unhealthy.name,
+            "configured": True,
+            "message": "Unhealthy provider is configured.",
+            "capabilities": ["image_generation", "image_to_video"],
+        }
+    )
+    service.router.circuit_breaker.record_failure(
+        unhealthy.name,
+        error="simulated outage",
+    )
+
+    rejected = client.post(
+        f"/providers/{unhealthy.name}/circuit/recover",
+        json={"actor": "operations-test"},
+    )
+    assert rejected.status_code == 422
+    assert "health check must pass" in rejected.json()["detail"]
+    assert service.router.circuit_breaker.snapshot(unhealthy.name)["state"] == "OPEN"
+
+
 def test_api_runs_complete_project_loop_with_batch_operations(
     tmp_path: Path,
     monkeypatch,
@@ -3698,6 +3773,8 @@ def test_studio_static_assets_are_served(tmp_path: Path, monkeypatch) -> None:
     assert "/providers/benchmark" in script.text
     assert "/providers/diagnostics" in script.text
     assert "/providers/warmup" in script.text
+    assert "/circuit/recover" in script.text
+    assert "providerRecoveryButton" in script.text
     assert "/lipsync" in script.text
     assert "/source-chapters" in script.text
     assert "/source-documents/import" in script.text
@@ -4064,6 +4141,16 @@ def test_required_auth_enforces_roles_and_tenant_isolation(
         headers=viewer_a,
         json={},
     ).status_code == 403
+    assert client.post(
+        "/providers/mock-provider/circuit/recover",
+        headers=viewer_a,
+        json={},
+    ).status_code == 403
+    assert client.post(
+        "/providers/mock-provider/circuit/recover",
+        headers=admin,
+        json={},
+    ).status_code == 422
     assert client.post(
         "/governance/license-registry/sync",
         headers=admin,

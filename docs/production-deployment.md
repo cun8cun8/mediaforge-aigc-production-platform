@@ -367,6 +367,12 @@ API/Worker 进程会在 `60` 秒内跳过该 Provider，并按优先级、能力
 接管时会重新载入该窗口。它仍由当前活跃 API 单写入，远程 Worker 通过已签名回调上报
 结果，不是允许多个 API 进程独立更新的多主熔断器。
 
+当已确认服务商故障已排除时，管理员可调用
+POST /providers/{provider_name}/circuit/recover 提前恢复路由。该接口先执行该
+服务商的主动健康探测，只有熔断仍为 OPEN 且探测通过才会关闭熔断并持久化状态；
+未配置主动探测、探测失败、已关闭或已进入半开状态都会拒绝。它不是绕过健康检查的
+强制启用接口。
+
 用量计费台账写入 `MEDIAFORGE_BILLING_DB`，事件以 `(tenant_id, event_id)` 幂等；旧表会
 在事务中迁移并保留记录。Provider 成功
 生成会自动登记用量，也可通过 `POST /billing/events` 接入外部计费系统，使用

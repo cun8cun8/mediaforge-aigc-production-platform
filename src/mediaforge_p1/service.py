@@ -14540,6 +14540,7 @@ class MediaForgeService:
             "configured": configured,
             "reachable": False if not configured else None,
             "healthy": False if not configured else None,
+            "probe": "not-configured" if not configured else "unavailable",
             "message": provider_status.get(
                 "message",
                 "Provider status is unavailable.",
@@ -14556,6 +14557,7 @@ class MediaForgeService:
             base.update(
                 {
                     "healthy": True,
+                    "probe": "unavailable",
                     "message": (
                         "Provider is configured; no active health probe is available."
                     ),
@@ -14577,15 +14579,18 @@ class MediaForgeService:
 
         reachable = bool(result.get("reachable"))
         healthy = bool(result.get("healthy", reachable))
+        result_details = result.get("details") or {}
+        probe = str(result_details.get("probe") or "active")
         base.update(
             {
                 "reachable": reachable,
                 "healthy": healthy,
+                "probe": probe,
                 "message": result.get("message") or base["message"],
                 "latency_ms": result.get("latency_ms"),
                 "details": {
                     **base["details"],
-                    **(result.get("details") or {}),
+                    **result_details,
                 },
             }
         )
@@ -14680,6 +14685,53 @@ class MediaForgeService:
             ),
         }
         return status
+
+    def recover_provider_circuit(
+        self,
+        provider_name: str,
+        *,
+        actor: str = "provider-operations",
+    ) -> dict[str, Any]:
+        """Health-check and manually recover one isolated Provider."""
+        clean_name = provider_name.strip()
+        if not clean_name:
+            raise WorkflowError("provider name is required")
+        provider = self._provider_named(clean_name)
+        with self.control_plane_mutation_guard():
+            current_circuit = self.router.circuit_breaker.snapshot(clean_name)
+            if current_circuit.get("state") != "OPEN":
+                raise WorkflowError(f"Provider circuit is not open: {clean_name}")
+            status_by_name = {
+                str(item.get("provider")): item
+                for item in self.provider_statuses
+            }
+            provider_status = status_by_name.get(
+                clean_name,
+                self.provider_status,
+            )
+            health = self._provider_health_for(provider, provider_status)
+            if not health.get("configured") or not health.get("healthy"):
+                raise WorkflowError(
+                    f"Provider health check must pass before circuit recovery: "
+                    f"{health.get('message') or clean_name}"
+                )
+            if health.get("probe") != "active":
+                raise WorkflowError(
+                    "Provider circuit recovery requires an active health probe: "
+                    f"{clean_name}"
+                )
+            circuit = self.router.circuit_breaker.manual_recover(clean_name)
+            self._persist()
+            return {
+                "provider": clean_name,
+                "actor": actor,
+                "health": health,
+                "circuit": circuit,
+                "circuit_status": self.provider_circuit_status(),
+                "message": (
+                    f"{clean_name} health check passed; routing is available again."
+                ),
+            }
 
     def _record_provider_circuit_transition(
         self,

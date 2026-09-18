@@ -987,7 +987,26 @@ function renderProviderCenter() {
       </div>
     `).join("")
     : `<div class="policy-row"><strong>暂无处理建议</strong><span>当前没有额外的服务商操作。</span></div>`;
+  renderProviderRecovery(circuits);
   renderProviderContract();
+}
+
+function renderProviderRecovery(circuits) {
+  const select = $("providerRecoverySelect");
+  const button = $("providerRecoveryButton");
+  const isolated = circuits.filter((item) => item.state === "OPEN");
+  select.replaceChildren();
+  for (const circuit of isolated) {
+    const option = document.createElement("option");
+    option.value = String(circuit.provider);
+    option.textContent = providerNameLabel(circuit.provider) + " · 恢复后重新参与路由";
+    select.append(option);
+  }
+  select.disabled = !isolated.length;
+  button.disabled = !isolated.length;
+  if (!isolated.length) {
+    $("providerRecoveryResult").textContent = "没有处于隔离状态的服务商。";
+  }
 }
 
 function renderProviderContract() {
@@ -3672,6 +3691,31 @@ async function warmupProvider() {
     await checkProviderHealth();
   } catch (error) {
     $("providerWarmupResult").textContent = error.message;
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+async function recoverProviderCircuit() {
+  const select = $("providerRecoverySelect");
+  const providerName = select.value;
+  if (!providerName) return;
+  const button = $("providerRecoveryButton");
+  setBusy(button, true, "探测中");
+  try {
+    const result = await request(
+      "/providers/" + encodeURIComponent(providerName) + "/circuit/recover",
+      {
+        method: "POST",
+        body: JSON.stringify({ actor: "studio-provider-operations" }),
+      },
+    );
+    await checkProviderHealth();
+    $("providerRecoveryResult").textContent = providerNameLabel(result.provider) + " 已通过健康检查并恢复路由。";
+    logEvent($("providerRecoveryResult").textContent, "muted");
+  } catch (error) {
+    $("providerRecoveryResult").textContent = error.message;
+    logEvent(error.message, "muted");
   } finally {
     setBusy(button, false);
   }
@@ -6718,6 +6762,7 @@ $("providerHealthButton").addEventListener("click", checkProviderHealth);
 $("providerDiagnosticsButton").addEventListener("click", checkProviderHealth);
 $("providerContractButton").addEventListener("click", validateProviderContract);
 $("providerWarmupButton").addEventListener("click", warmupProvider);
+$("providerRecoveryButton").addEventListener("click", recoverProviderCircuit);
 $("planButton").addEventListener("click", planProject);
 $("generateAllButton").addEventListener("click", generateAllShots);
 $("queueAllButton").addEventListener("click", queueAllShots);

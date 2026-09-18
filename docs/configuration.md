@@ -95,6 +95,12 @@ it becomes active. Routing remains single-writer active/passive: this is not a
 multi-primary Provider coordinator, and remote Workers report outcomes back to
 the active API rather than maintaining independent circuits.
 
+An administrator can restore a still-open circuit early with
+POST /providers/{provider_name}/circuit/recover. MediaForge runs that
+Provider's active health probe first and closes the circuit only when the probe
+passes. It rejects a closed or half-open circuit, a configuration-only probe,
+and any failed probe; the endpoint is deliberately not a force-enable switch.
+
 ### Replicate Native Webhook Worker
 
 Use this only when the API is reachable on a public HTTPS URL. The Worker
