@@ -385,6 +385,53 @@ class MediaForgeService:
     def operations_alerts_prometheus(self) -> str:
         return operations_alerts_prometheus(self.operations_alerts())
 
+    def provider_circuits_prometheus(self) -> str:
+        """Expose non-secret Provider circuit state for Prometheus scraping."""
+        circuits = self.provider_circuit_status()
+        lines = [
+            "# HELP mediaforge_provider_circuit_open Whether a Provider circuit is open (1) or routable (0).",
+            "# TYPE mediaforge_provider_circuit_open gauge",
+            "# HELP mediaforge_provider_circuit_consecutive_failures Consecutive Provider execution failures tracked by the circuit.",
+            "# TYPE mediaforge_provider_circuit_consecutive_failures gauge",
+            "# HELP mediaforge_provider_circuit_open_until_timestamp_seconds Scheduled circuit recovery time as a Unix timestamp, or zero.",
+            "# TYPE mediaforge_provider_circuit_open_until_timestamp_seconds gauge",
+        ]
+        for circuit in circuits["providers"]:
+            provider = self._prometheus_label(str(circuit["provider"]))
+            state = str(circuit.get("state") or "CLOSED")
+            open_until = circuit.get("open_until")
+            recovery_timestamp = 0.0
+            if isinstance(open_until, str) and open_until:
+                try:
+                    recovery_timestamp = datetime.fromisoformat(
+                        open_until.replace("Z", "+00:00")
+                    ).timestamp()
+                except ValueError:
+                    recovery_timestamp = 0.0
+            lines.extend(
+                [
+                    f'mediaforge_provider_circuit_open{{provider="{provider}"}} {1 if state == "OPEN" else 0}',
+                    (
+                        "mediaforge_provider_circuit_consecutive_failures"
+                        f'{{provider="{provider}"}} '
+                        f'{int(circuit.get("consecutive_failures") or 0)}'
+                    ),
+                    (
+                        "mediaforge_provider_circuit_open_until_timestamp_seconds"
+                        f'{{provider="{provider}"}} {recovery_timestamp:.3f}'
+                    ),
+                ]
+            )
+        return "\n".join(lines) + "\n"
+
+    @staticmethod
+    def _prometheus_label(value: str) -> str:
+        return (
+            value.replace("\\", "\\\\")
+            .replace('"', '\\"')
+            .replace("\n", "\\n")
+        )
+
     def source_ingest_status(self) -> dict[str, Any]:
         return ocr_status()
 

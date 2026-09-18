@@ -140,6 +140,12 @@ def test_service_alerts_when_all_enabled_provider_circuits_are_open(
     )
     assert alert["severity"] == "critical"
     assert "PROVIDER_CIRCUIT_OPEN" in service.operations_alerts_prometheus()
+    circuit_metrics = service.provider_circuits_prometheus()
+    assert 'mediaforge_provider_circuit_open{provider="mock-provider"} 1' in circuit_metrics
+    assert (
+        'mediaforge_provider_circuit_consecutive_failures{provider="mock-provider"} 1'
+        in circuit_metrics
+    )
 
 
 def test_service_and_api_expose_operations_alerts(tmp_path, monkeypatch) -> None:
@@ -170,7 +176,9 @@ def test_service_and_api_expose_operations_alerts(tmp_path, monkeypatch) -> None
         response = client.get("/ops/alerts")
         assert response.status_code == 200
         assert response.json()["schema_version"] == "mediaforge-operations-alerts-v1"
-        assert "mediaforge_operations_alerts_active" in client.get("/metrics").text
+        metrics = client.get("/metrics").text
+        assert "mediaforge_operations_alerts_active" in metrics
+        assert "mediaforge_provider_circuit_open" in metrics
 
 
 def test_leased_control_plane_without_postgres_refuses_traffic(tmp_path, monkeypatch) -> None:

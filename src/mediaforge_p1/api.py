@@ -978,6 +978,7 @@ def create_app(output_root: Path | None = None) -> FastAPI:
         return (
             app.state.http_metrics.prometheus()
             + service.runtime_metrics.prometheus()
+            + service.provider_circuits_prometheus()
             + service.operations_alerts_prometheus()
         )
 

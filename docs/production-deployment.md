@@ -172,8 +172,10 @@ studio spend, stale Worker heartbeats, Provider circuit isolation, and optional
 strict production readiness. A partially isolated Provider pool is a warning;
 when every enabled Provider is isolated, PROVIDER_CIRCUIT_OPEN is critical.
 The same active-alert gauges are exposed through `/metrics` for Prometheus or
-another collector. The API does not transmit telemetry or invoke webhooks on its
-own, so alert routing remains under the deployment team's control.
+another collector. Per-Provider circuit gauges expose the open state, consecutive
+failure count, and scheduled recovery timestamp without exposing provider
+credentials. The API does not transmit telemetry or invoke webhooks on its own,
+so alert routing remains under the deployment team's control.
 
 Set the `MEDIAFORGE_ALERT_*` variables in `.env.example` to match capacity and
 budget policy. Enable `MEDIAFORGE_ALERT_REQUIRE_PRODUCTION_READY=true` only in a
