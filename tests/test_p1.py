@@ -2235,6 +2235,48 @@ def test_provider_router_skips_open_circuit_and_recovers() -> None:
     assert router.select(spec).provider.name == primary.name
 
 
+def test_provider_circuit_state_survives_service_restart(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("MEDIAFORGE_STATE_BACKEND", "sqlite")
+    monkeypatch.setenv("MEDIAFORGE_PROVIDER_CIRCUIT_FAILURE_THRESHOLD", "1")
+    monkeypatch.setenv("MEDIAFORGE_PROVIDER_CIRCUIT_OPEN_SECONDS", "60")
+    primary = MockProvider()
+    primary.name = "persistent-primary"
+    fallback = MockProvider()
+    fallback.name = "persistent-fallback"
+    registrations = [
+        ProviderRegistration(provider=primary, priority=10),
+        ProviderRegistration(provider=fallback, priority=1),
+    ]
+    service = MediaForgeService(
+        tmp_path,
+        provider=primary,
+        provider_registrations=registrations,
+    )
+    service.router.circuit_breaker.record_failure(
+        primary.name,
+        error="upstream unavailable",
+    )
+    service._persist()
+
+    restored = MediaForgeService(
+        tmp_path,
+        provider=primary,
+        provider_registrations=registrations,
+    )
+    circuit = restored.router.circuit_breaker.snapshot(primary.name)
+    assert circuit["state"] == "OPEN"
+    assert restored.router.select(make_spec()).provider.name == fallback.name
+    assert restored.provider_circuit_status()["persistence"] == {
+        "backend": "sqlite",
+        "survives_restart": True,
+        "shared_on_control_plane_failover": False,
+        "topology": "single-control-plane-snapshot",
+    }
+
+
 def test_vertical_slice_exports_manifest_and_final_mp4(tmp_path: Path) -> None:
     result = run_vertical_slice(tmp_path)
 

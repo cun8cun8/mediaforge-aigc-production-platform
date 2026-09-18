@@ -88,9 +88,12 @@ normal priority and budget rules. The circuit re-enters routing after the
 cooldown and closes after a successful operation. Inspect non-secret state at
 `GET /providers/circuits` or `GET /providers/health`.
 
-This state is deliberately process-local and resets on restart. It protects an
-individual API or Worker process, but is not a substitute for a Redis/Postgres
-backed fleet-wide control plane in a multi-instance deployment.
+Circuit state is persisted with the MediaForge control-plane snapshot, so it
+survives a restart. With `MEDIAFORGE_STATE_BACKEND=postgres` and
+`MEDIAFORGE_CONTROL_PLANE_MODE=leased`, a standby reloads the open window when
+it becomes active. Routing remains single-writer active/passive: this is not a
+multi-primary Provider coordinator, and remote Workers report outcomes back to
+the active API rather than maintaining independent circuits.
 
 ### Replicate Native Webhook Worker
 

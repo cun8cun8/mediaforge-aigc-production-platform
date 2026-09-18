@@ -14581,9 +14581,24 @@ class MediaForgeService:
         return primary
 
     def provider_circuit_status(self) -> dict[str, Any]:
-        return self.router.circuit_breaker.status_view(
+        status = self.router.circuit_breaker.status_view(
             [registration.provider.name for registration in self.router.registrations]
         )
+        shared_on_failover = bool(
+            self.state_backend == "postgres"
+            and self.enterprise.control_plane.enabled
+        )
+        status["persistence"] = {
+            "backend": self.state_backend,
+            "survives_restart": True,
+            "shared_on_control_plane_failover": shared_on_failover,
+            "topology": (
+                "leased-active-passive-snapshot"
+                if shared_on_failover
+                else "single-control-plane-snapshot"
+            ),
+        }
+        return status
 
     def _record_provider_circuit_transition(
         self,
@@ -16459,6 +16474,7 @@ class MediaForgeService:
                 ],
                 "jobs": self.jobs.as_list(),
                 "workers": copy.deepcopy(self.workers),
+                "provider_circuit_breaker": self.router.circuit_breaker.export_state(),
             }
             serialized = json.dumps(payload, ensure_ascii=True, indent=2)
             if self.state_backend == "postgres":
@@ -16524,6 +16540,9 @@ class MediaForgeService:
                     f"cannot restore MediaForge state from {self.state_path}: {exc}"
                 ) from exc
         try:
+            self.router.circuit_breaker.restore(
+                payload.get("provider_circuit_breaker")
+            )
             self.jobs.restore(payload.get("jobs", []))
             stored_workers = payload.get("workers", {})
             if isinstance(stored_workers, dict):

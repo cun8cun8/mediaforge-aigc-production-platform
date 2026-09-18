@@ -81,9 +81,9 @@ class _ProviderCircuitState:
 class ProviderCircuitBreaker:
     """Small, observable circuit breaker used by a single API/Worker process.
 
-    State is intentionally in-memory. It protects a local process immediately;
-    production multi-instance deployments should share this concern through an
-    external control plane before claiming fleet-wide circuit behaviour.
+    The breaker makes no network calls and protects its local process
+    immediately. Its owner can persist ``export_state`` with a control-plane
+    snapshot and restore it after a restart or active/passive failover.
     """
 
     def __init__(
@@ -247,6 +247,126 @@ class ProviderCircuitBreaker:
             "open_seconds": self.settings.open_seconds,
             "providers": [self.snapshot(name) for name in names],
         }
+
+    def export_state(self) -> dict[str, object]:
+        """Return the non-secret state that a durable control plane can own."""
+        with self._lock:
+            if not self.settings.enabled:
+                return {
+                    "schema_version": "mediaforge-provider-circuit-v1",
+                    "states": [],
+                }
+            checked_at = self._now()
+            states = []
+            for provider_name, state in sorted(self._states.items()):
+                if (
+                    state.state == "OPEN"
+                    and state.open_until is not None
+                    and checked_at >= state.open_until
+                ):
+                    state.state = "HALF_OPEN"
+                states.append(
+                    {
+                        "provider": provider_name,
+                        "consecutive_failures": state.consecutive_failures,
+                        "state": state.state,
+                        "opened_at": (
+                            state.opened_at.isoformat() if state.opened_at else None
+                        ),
+                        "open_until": (
+                            state.open_until.isoformat() if state.open_until else None
+                        ),
+                        "last_error": state.last_error,
+                        "last_failure_at": (
+                            state.last_failure_at.isoformat()
+                            if state.last_failure_at
+                            else None
+                        ),
+                        "last_success_at": (
+                            state.last_success_at.isoformat()
+                            if state.last_success_at
+                            else None
+                        ),
+                    }
+                )
+            return {
+                "schema_version": "mediaforge-provider-circuit-v1",
+                "states": states,
+            }
+
+    def restore(self, payload: object) -> dict[str, int]:
+        """Replace local state from a previously exported durable snapshot.
+
+        Circuit state is a protective cache, not project truth. Invalid legacy
+        rows are ignored so an old or partially malformed snapshot cannot stop
+        the control plane from recovering its project and Job state.
+        """
+        with self._lock:
+            self._states = {}
+            if not self.settings.enabled:
+                return {"restored": 0, "ignored": 0}
+            if not isinstance(payload, dict):
+                return {"restored": 0, "ignored": 0}
+            rows = payload.get("states")
+            if not isinstance(rows, list):
+                return {"restored": 0, "ignored": 0}
+            restored = 0
+            ignored = 0
+            for row in rows:
+                if not isinstance(row, dict):
+                    ignored += 1
+                    continue
+                try:
+                    provider_name = self._clean_name(str(row.get("provider") or ""))
+                    raw_failures = row.get("consecutive_failures", 0)
+                    if isinstance(raw_failures, bool):
+                        raise ValueError("failure count must be numeric")
+                    failures = int(raw_failures)
+                    state_name = str(row.get("state") or "CLOSED").upper()
+                    if failures < 0 or state_name not in {
+                        "CLOSED",
+                        "OPEN",
+                        "HALF_OPEN",
+                    }:
+                        raise ValueError("invalid circuit state")
+                    restored_state = _ProviderCircuitState(
+                        consecutive_failures=failures,
+                        state=state_name,
+                        opened_at=self._restore_datetime(row.get("opened_at")),
+                        open_until=self._restore_datetime(row.get("open_until")),
+                        last_error=(
+                            str(row["last_error"])[:1000]
+                            if row.get("last_error") is not None
+                            else None
+                        ),
+                        last_failure_at=self._restore_datetime(
+                            row.get("last_failure_at")
+                        ),
+                        last_success_at=self._restore_datetime(
+                            row.get("last_success_at")
+                        ),
+                    )
+                    # An OPEN circuit without a recovery timestamp must never
+                    # create a permanent routing blackout after restoration.
+                    if (
+                        restored_state.state == "OPEN"
+                        and restored_state.open_until is None
+                    ):
+                        restored_state.state = "HALF_OPEN"
+                    self._states[provider_name] = restored_state
+                    restored += 1
+                except (TypeError, ValueError):
+                    ignored += 1
+            return {"restored": restored, "ignored": ignored}
+
+    @staticmethod
+    def _restore_datetime(value: object) -> datetime | None:
+        if not isinstance(value, str) or not value.strip():
+            return None
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            raise ValueError("circuit timestamp requires a timezone")
+        return parsed.astimezone(timezone.utc)
 
     def _snapshot_locked(
         self,

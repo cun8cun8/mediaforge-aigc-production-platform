@@ -358,8 +358,10 @@ API/Worker 进程会在 `60` 秒内跳过该 Provider，并按优先级、能力
 `MEDIAFORGE_PROVIDER_CIRCUIT_BREAKER_ENABLED`、
 `MEDIAFORGE_PROVIDER_CIRCUIT_FAILURE_THRESHOLD`、
 `MEDIAFORGE_PROVIDER_CIRCUIT_OPEN_SECONDS` 调整，并通过
-`GET /providers/circuits` 查看非敏感状态。该状态是进程内的快速保护，重启后会清空；多
-API/Worker 实例不能把它视为共享熔断，仍需要在 Redis/PostgreSQL 控制面实现集中协调。
+`GET /providers/circuits` 查看非敏感状态。熔断窗口随 MediaForge 状态快照持久化，
+因此服务重启会恢复；当使用 PostgreSQL 状态和 leased active/passive 控制面时，备机在
+接管时会重新载入该窗口。它仍由当前活跃 API 单写入，远程 Worker 通过已签名回调上报
+结果，不是允许多个 API 进程独立更新的多主熔断器。
 
 用量计费台账写入 `MEDIAFORGE_BILLING_DB`，事件以 `(tenant_id, event_id)` 幂等；旧表会
 在事务中迁移并保留记录。Provider 成功
