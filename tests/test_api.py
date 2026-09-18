@@ -32,7 +32,12 @@ from mediaforge_p1.media import (
     sha256_file,
 )
 from mediaforge_p1.providers import MockProvider
-from mediaforge_p1.router import ProviderRegistration, ProviderRouter
+from mediaforge_p1.router import (
+    ProviderCircuitBreaker,
+    ProviderCircuitBreakerSettings,
+    ProviderRegistration,
+    ProviderRouter,
+)
 from mediaforge_p1.worker import run_remote_worker, run_worker
 from mediaforge_p1.webhooks import WebhookDispatcher
 
@@ -412,6 +417,76 @@ def test_provider_retry_after_becomes_a_scheduled_job_backoff(
     assert retry_event.details["delay_seconds"] == 45
     assert retry_event.details["policy_delay_seconds"] == 5
     assert retry_event.details["provider_retry_after_seconds"] == 45
+
+
+def test_open_provider_circuit_routes_later_shots_to_a_fallback(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client = make_client(tmp_path, monkeypatch)
+    service = client.app.state.mediaforge
+    primary = AlwaysFailProvider()
+    secondary = MockProvider()
+    service.provider = primary
+    service.router = ProviderRouter(
+        [
+            ProviderRegistration(provider=primary, priority=10),
+            ProviderRegistration(provider=secondary, priority=1),
+        ],
+        circuit_breaker=ProviderCircuitBreaker(
+            ProviderCircuitBreakerSettings(failure_threshold=1, open_seconds=60)
+        ),
+    )
+    service.set_provider_status(
+        {
+            "mode": "custom",
+            "provider": primary.name,
+            "configured": True,
+            "message": "Provider pool is active.",
+            "capabilities": ["image_generation", "image_to_video"],
+        }
+    )
+
+    first_project = "api_provider_circuit_first"
+    assert client.post("/projects", json=make_brief(first_project)).status_code == 201
+    first_shot = client.post(f"/projects/{first_project}/plan").json()["shots"][0]["shot"]["shot_id"]
+    first = client.post(f"/projects/{first_project}/shots/{first_shot}/submit")
+    assert first.status_code == 200
+    assert [item["provider"] for item in first.json()["route"]["attempts"]] == [
+        primary.name,
+        secondary.name,
+    ]
+
+    circuits = client.get("/providers/circuits")
+    assert circuits.status_code == 200
+    primary_circuit = next(
+        item for item in circuits.json()["providers"] if item["provider"] == primary.name
+    )
+    assert primary_circuit["state"] == "OPEN"
+    assert primary_circuit["available"] is False
+    route_preview = client.get(
+        f"/projects/{first_project}/shots/{first_shot}/route"
+    )
+    assert route_preview.status_code == 200
+    primary_candidate = next(
+        item
+        for item in route_preview.json()["candidates"]
+        if item["provider"] == primary.name
+    )
+    assert primary_candidate["circuit"]["state"] == "OPEN"
+    assert "circuit is open" in primary_candidate["reason"]
+
+    second_project = "api_provider_circuit_second"
+    assert client.post("/projects", json=make_brief(second_project)).status_code == 201
+    second_shot = client.post(f"/projects/{second_project}/plan").json()["shots"][0]["shot"]["shot_id"]
+    second = client.post(f"/projects/{second_project}/shots/{second_shot}/submit")
+    assert second.status_code == 200
+    assert [item["provider"] for item in second.json()["route"]["attempts"]] == [secondary.name]
+    audit_actions = {
+        event["action"]
+        for event in client.get(f"/projects/{first_project}/audit").json()["events"]
+    }
+    assert "provider.circuit_opened" in audit_actions
 
 
 def test_api_runs_complete_project_loop_with_batch_operations(

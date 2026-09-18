@@ -72,6 +72,26 @@ $env:REPLICATE_HTTP_RETRY_MAX_DELAY_SECONDS = "15"
 
 Keep the model version immutable. The adapter sends a per-Job idempotency key, uses bounded retries for transient failures, and requests a remote prediction deadline through `Cancel-After`. If local polling reaches its timeout or an operator cancels a bound native-webhook Job, it requests the prediction's `urls.cancel` endpoint with the independent bounded `REPLICATE_CANCEL_REQUEST_TIMEOUT_SECONDS` timeout. It does not expose the token in diagnostics. See [Replicate Provider Adapter](replicate-provider.md).
 
+### Provider Routing Circuit Breaker
+
+```powershell
+$env:MEDIAFORGE_PROVIDER_CIRCUIT_BREAKER_ENABLED = "true"
+$env:MEDIAFORGE_PROVIDER_CIRCUIT_FAILURE_THRESHOLD = "3"
+$env:MEDIAFORGE_PROVIDER_CIRCUIT_OPEN_SECONDS = "60"
+```
+
+After the configured number of consecutive generation or asynchronous callback
+failures, the current process temporarily excludes that Provider from routing.
+The cooldown uses the larger of `MEDIAFORGE_PROVIDER_CIRCUIT_OPEN_SECONDS` and
+a Provider `Retry-After` value; an eligible fallback is then selected by the
+normal priority and budget rules. The circuit re-enters routing after the
+cooldown and closes after a successful operation. Inspect non-secret state at
+`GET /providers/circuits` or `GET /providers/health`.
+
+This state is deliberately process-local and resets on restart. It protects an
+individual API or Worker process, but is not a substitute for a Redis/Postgres
+backed fleet-wide control plane in a multi-instance deployment.
+
 ### Replicate Native Webhook Worker
 
 Use this only when the API is reachable on a public HTTPS URL. The Worker

@@ -352,6 +352,15 @@ Compose 从 `.env` 插值；使用其他环境文件时同时传入 `--env-file`
 返回精确的 `Retry-After`、`X-RateLimit-Reset` 和 JSON 恢复时间，工作台应按该时间退避，
 而不是假定整个窗口都不可用。
 
+Provider 路由额外使用本地熔断保护。默认连续 `3` 次生成或异步回调失败后，当前
+API/Worker 进程会在 `60` 秒内跳过该 Provider，并按优先级、能力和预算选择备选；Provider
+给出的 `Retry-After` 更长时会延长窗口。可用
+`MEDIAFORGE_PROVIDER_CIRCUIT_BREAKER_ENABLED`、
+`MEDIAFORGE_PROVIDER_CIRCUIT_FAILURE_THRESHOLD`、
+`MEDIAFORGE_PROVIDER_CIRCUIT_OPEN_SECONDS` 调整，并通过
+`GET /providers/circuits` 查看非敏感状态。该状态是进程内的快速保护，重启后会清空；多
+API/Worker 实例不能把它视为共享熔断，仍需要在 Redis/PostgreSQL 控制面实现集中协调。
+
 用量计费台账写入 `MEDIAFORGE_BILLING_DB`，事件以 `(tenant_id, event_id)` 幂等；旧表会
 在事务中迁移并保留记录。Provider 成功
 生成会自动登记用量，也可通过 `POST /billing/events` 接入外部计费系统，使用

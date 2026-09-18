@@ -2192,6 +2192,49 @@ def test_provider_router_uses_priority_and_budget() -> None:
         router.select(constrained)
 
 
+def test_provider_router_skips_open_circuit_and_recovers() -> None:
+    from mediaforge_p1.router import (
+        ProviderCircuitBreaker,
+        ProviderCircuitBreakerSettings,
+    )
+
+    spec = make_spec()
+    primary = MockProvider()
+    primary.name = "primary-provider"
+    fallback = MockProvider()
+    fallback.name = "fallback-provider"
+    now = datetime.now(timezone.utc)
+    circuit = ProviderCircuitBreaker(
+        ProviderCircuitBreakerSettings(failure_threshold=2, open_seconds=30)
+    )
+    router = ProviderRouter(
+        [
+            ProviderRegistration(provider=primary, priority=10),
+            ProviderRegistration(provider=fallback, priority=1),
+        ],
+        circuit_breaker=circuit,
+    )
+
+    circuit.record_failure(primary.name, error="timeout", now=now)
+    assert router.select(spec).provider.name == primary.name
+    opened = circuit.record_failure(
+        primary.name,
+        error="rate limited",
+        retry_after_seconds=45,
+        now=now,
+    )
+    assert opened["opened"] is True
+    assert opened["state"] == "OPEN"
+    assert router.select(spec).provider.name == fallback.name
+
+    assert circuit.is_available(primary.name, now=now + timedelta(seconds=44)) is False
+    assert circuit.is_available(primary.name, now=now + timedelta(seconds=45)) is True
+    assert circuit.snapshot(primary.name, now=now + timedelta(seconds=45))["state"] == "HALF_OPEN"
+    recovered = circuit.record_success(primary.name, now=now + timedelta(seconds=46))
+    assert recovered["recovered"] is True
+    assert router.select(spec).provider.name == primary.name
+
+
 def test_vertical_slice_exports_manifest_and_final_mp4(tmp_path: Path) -> None:
     result = run_vertical_slice(tmp_path)
 

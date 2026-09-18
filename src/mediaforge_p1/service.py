@@ -8317,6 +8317,10 @@ class MediaForgeService:
                     runtime.spec.provider_constraints.capability
                 )
             )
+            circuit = self.router.circuit_breaker.snapshot(
+                registration.provider.name
+            )
+            circuit_available = bool(circuit["available"])
             estimated_cost = None
             route_error = None
             within_budget = False
@@ -8336,6 +8340,7 @@ class MediaForgeService:
                 "enabled": registration.enabled,
                 "priority": registration.priority,
                 "supported": supported,
+                "circuit": circuit,
                 "estimated_cost": (
                     round(float(estimated_cost), 4)
                     if estimated_cost is not None
@@ -8349,7 +8354,13 @@ class MediaForgeService:
                     decision.reason
                     if decision and decision.provider.name == registration.provider.name
                     else route_error or (
-                        "disabled" if not registration.enabled else "unsupported"
+                        "disabled"
+                        if not registration.enabled
+                        else "unsupported"
+                        if not supported
+                        else "temporarily unavailable: provider circuit is open"
+                        if not circuit_available
+                        else "not selected"
                     )
                 ),
             }
@@ -8576,6 +8587,15 @@ class MediaForgeService:
                     tenant_id=project.brief.tenant_id,
                     project_id=project_id,
                 )
+                circuit_result = self.router.circuit_breaker.record_success(
+                    decision.provider.name,
+                )
+                self._record_provider_circuit_transition(
+                    project,
+                    decision.provider.name,
+                    circuit_result,
+                    actor=decision.provider.name,
+                )
                 quality_result = self._probe_artifact_media(artifact)
                 quality = self._evaluate_artifact_quality(
                     artifact,
@@ -8608,6 +8628,17 @@ class MediaForgeService:
                     "created_at": datetime.now(timezone.utc).isoformat(),
                 }
             except Exception as exc:
+                circuit_result = self.router.circuit_breaker.record_failure(
+                    decision.provider.name,
+                    error=str(exc),
+                    retry_after_seconds=self._provider_retry_after_seconds(exc),
+                )
+                self._record_provider_circuit_transition(
+                    project,
+                    decision.provider.name,
+                    circuit_result,
+                    actor=decision.provider.name,
+                )
                 if job.status == JobStatus.RUNNING:
                     self.jobs.transition(job.job_id, JobStatus.FAILED, reason=str(exc))
                 variant = {
@@ -9225,6 +9256,15 @@ class MediaForgeService:
                     tenant_id=project.brief.tenant_id,
                     project_id=project_id,
                 )
+                circuit_result = self.router.circuit_breaker.record_success(
+                    decision.provider.name,
+                )
+                self._record_provider_circuit_transition(
+                    project,
+                    decision.provider.name,
+                    circuit_result,
+                    actor=decision.provider.name,
+                )
                 quality_result = self._probe_artifact_media(artifact)
                 quality = self._evaluate_artifact_quality(
                     artifact,
@@ -9291,6 +9331,17 @@ class MediaForgeService:
             except WorkflowError:
                 raise
             except Exception as exc:
+                circuit_result = self.router.circuit_breaker.record_failure(
+                    decision.provider.name,
+                    error=str(exc),
+                    retry_after_seconds=self._provider_retry_after_seconds(exc),
+                )
+                self._record_provider_circuit_transition(
+                    project,
+                    decision.provider.name,
+                    circuit_result,
+                    actor=decision.provider.name,
+                )
                 try:
                     fallback = self.router.select(
                         runtime.spec,
@@ -9956,6 +10007,16 @@ class MediaForgeService:
             )
         elif status == JobStatus.FAILED:
             failure_reason = reason or "provider callback reported failure"
+            circuit_result = self.router.circuit_breaker.record_failure(
+                clean_provider,
+                error=failure_reason,
+            )
+            self._record_provider_circuit_transition(
+                project,
+                clean_provider,
+                circuit_result,
+                actor=actor,
+            )
             self.jobs.transition(job_id, JobStatus.FAILED, reason=failure_reason)
             self._schedule_retry_after_failure(
                 project,
@@ -9991,6 +10052,13 @@ class MediaForgeService:
             artifact = callback_artifact
             if artifact is None:
                 raise WorkflowError("successful provider callback artifact is missing")
+            circuit_result = self.router.circuit_breaker.record_success(clean_provider)
+            self._record_provider_circuit_transition(
+                project,
+                clean_provider,
+                circuit_result,
+                actor=actor,
+            )
             self.enterprise.billing.record(
                 event_id=f"generation:{job_id}:{job.attempts}",
                 tenant_id=project.brief.tenant_id,
@@ -14478,6 +14546,12 @@ class MediaForgeService:
     def provider_health(self) -> dict[str, Any]:
         primary = self._provider_health_for(self.provider, self.provider_status)
         registrations = self.router.registrations
+        circuits = self.provider_circuit_status()
+        circuit_by_provider = {
+            str(item["provider"]): item
+            for item in circuits["providers"]
+        }
+        primary["circuit_breaker"] = circuits
         if len(registrations) <= 1:
             return primary
 
@@ -14495,6 +14569,8 @@ class MediaForgeService:
             )
             for registration in registrations
         ]
+        for provider in providers:
+            provider["circuit"] = circuit_by_provider.get(provider["provider"])
         primary["providers"] = providers
         primary["configured_provider_count"] = sum(
             1 for item in providers if item["configured"]
@@ -14503,6 +14579,39 @@ class MediaForgeService:
             1 for item in providers if item["healthy"]
         )
         return primary
+
+    def provider_circuit_status(self) -> dict[str, Any]:
+        return self.router.circuit_breaker.status_view(
+            [registration.provider.name for registration in self.router.registrations]
+        )
+
+    def _record_provider_circuit_transition(
+        self,
+        project: ProjectRuntime,
+        provider_name: str,
+        result: dict[str, object],
+        *,
+        actor: str,
+    ) -> None:
+        if result.get("opened"):
+            self._record_event(
+                project,
+                action="provider.circuit_opened",
+                actor=actor,
+                message=(
+                    f"{provider_name} is temporarily removed from Provider routing "
+                    "after consecutive failures."
+                ),
+                details=result,
+            )
+        elif result.get("recovered"):
+            self._record_event(
+                project,
+                action="provider.circuit_recovered",
+                actor=actor,
+                message=f"{provider_name} recovered and rejoined Provider routing.",
+                details=result,
+            )
 
     def provider_warmup(self) -> dict[str, Any]:
         """Run explicitly configured model warmups; never runs during read-only health checks."""

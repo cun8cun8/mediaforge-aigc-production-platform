@@ -1326,6 +1326,10 @@ def create_app(output_root: Path | None = None) -> FastAPI:
     def provider_health() -> dict:
         return service.provider_health()
 
+    @app.get("/providers/circuits")
+    def provider_circuits() -> dict:
+        return service.provider_circuit_status()
+
     @app.post("/providers/warmup")
     def provider_warmup() -> dict[str, Any]:
         return service.provider_warmup()

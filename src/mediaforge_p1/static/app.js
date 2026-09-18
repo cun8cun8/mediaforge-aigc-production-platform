@@ -922,6 +922,8 @@ function renderProviderCenter() {
   if (!status) return;
   const diagnostics = state.providerDiagnostics;
   const health = diagnostics?.health;
+  const circuits = health?.circuit_breaker?.providers || [];
+  const openCircuits = circuits.filter((item) => item.state === "OPEN");
   const grade = diagnostics?.grade || (status.configured
     ? (status.mode === "mock" ? "SIMULATION" : null)
     : "BLOCKED");
@@ -942,6 +944,7 @@ function renderProviderCenter() {
     <div><span>配置</span><strong>${status.configured ? "已配置" : "未配置"}</strong></div>
     <div><span>连通性</span><strong>${health ? (health.healthy ? "在线" : "离线") : "待诊断"}</strong></div>
     <div><span>路由池</span><strong>${status.providers?.length || 1} 个 · ${health?.healthy_provider_count ?? (health ? (health.healthy ? 1 : 0) : 0)} 个在线</strong></div>
+    <div><span>路由保护</span><strong>${!health ? "待检查" : (health.circuit_breaker?.enabled === false ? "未启用" : (openCircuits.length ? `${openCircuits.length} 个服务商暂时隔离` : "正常"))}</strong></div>
   `;
   $("providerMessage").textContent = localizeProviderDiagnosticMessage(
     health?.message || status.message,
