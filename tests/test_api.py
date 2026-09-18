@@ -4274,11 +4274,23 @@ def test_media_route_rejects_unknown_and_traversal_paths(
     media_path = artifact_uri.split(f"/{project_id}/", 1)[1]
 
     media = client.get(f"/projects/{project_id}/media/{media_path}")
+    media_head = client.head(f"/projects/{project_id}/media/{media_path}")
+    media_range = client.get(
+        f"/projects/{project_id}/media/{media_path}",
+        headers={"Range": "bytes=0-31"},
+    )
     missing = client.get(f"/projects/{project_id}/media/shots/nope.mp4")
     traversal = client.get(f"/projects/{project_id}/media/../mediaforge-state.json")
 
     assert media.status_code == 200
     assert media.headers["content-type"].startswith("video/")
+    assert media_head.status_code == 200
+    assert media_head.headers["content-type"].startswith("video/")
+    assert media_head.headers["accept-ranges"] == "bytes"
+    assert media_head.content == b""
+    assert media_range.status_code == 206
+    assert media_range.headers["content-range"].startswith("bytes 0-31/")
+    assert len(media_range.content) == 32
     assert missing.status_code == 404
     assert traversal.status_code == 404
 

@@ -3621,7 +3621,10 @@ def create_app(output_root: Path | None = None) -> FastAPI:
         except WorkflowError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    @app.get("/projects/{project_id}/media/{media_path:path}")
+    @app.api_route(
+        "/projects/{project_id}/media/{media_path:path}",
+        methods=["GET", "HEAD"],
+    )
     def get_project_media(project_id: str, media_path: str) -> FileResponse:
         try:
             service.project_view(project_id)
