@@ -591,6 +591,10 @@ def test_delivery_feedback_closes_the_recipient_feedback_loop(tmp_path: Path) ->
     report = service.delivery_feedback_report(project_id)
     assert report["summary"]["blocking_open_count"] == 1
     assert report["items"][0]["target_id"] == shot_id
+    gate = service.delivery_feedback_gate(project_id)
+    assert gate["passed"] is False
+    assert gate["blocking_count"] == 1
+    assert feedback["feedback_id"] in gate["blocking_feedback_ids"]
 
     with pytest.raises(ValueError, match="requires a resolution"):
         service.triage_delivery_feedback(
@@ -606,6 +610,7 @@ def test_delivery_feedback_closes_the_recipient_feedback_loop(tmp_path: Path) ->
         actor="visual-lead",
     )["feedback"]
     assert updated["status"] == "RESOLVED"
+    assert service.delivery_feedback_gate(project_id)["passed"] is True
     assert service.distribution_report(project_id)["feedback"]["summary"]["resolved_count"] == 1
     assert service.project_view(project_id)["delivery_feedback"]["unresolved_count"] == 0
 

@@ -562,6 +562,8 @@ class MediaForgeService:
         control_plane = self.control_plane_status(
             acquire=self.enterprise.control_plane.enabled
         )
+        content_credentials = self.content_credentials_status()
+        content_credentials_required = self.release_content_credentials_required()
         enterprise_ready = (
             bool(enterprise["identity"]["production_ready"])
             and bool(enterprise["storage"]["write_enabled"])
@@ -705,6 +707,16 @@ class MediaForgeService:
                     else "Enterprise runtime needs identity, storage or shared queue configuration."
                 ),
             },
+            {
+                "code": "content_credentials",
+                "passed": bool(content_credentials.get("production_ready")),
+                "blocking": content_credentials_required,
+                "message": (
+                    "Trusted C2PA signing and independent verification are ready."
+                    if content_credentials.get("production_ready")
+                    else "Production release credentials require a trusted C2PA signer, verifier, and operator attestation."
+                ),
+            },
         ]
         blocking_failures = [
             check["code"]
@@ -727,6 +739,19 @@ class MediaForgeService:
             next_actions.append("Use MEDIAFORGE_STATE_BACKEND=sqlite for production state.")
         if not real_provider:
             next_actions.append("Run a real Provider smoke test before commercial launch.")
+        if not content_credentials.get("production_ready"):
+            next_actions.append(
+                "Configure and independently verify trusted C2PA credentials before production release."
+            )
+        production_gaps = [
+            {
+                "code": check["code"],
+                "severity": "BLOCKER" if check["blocking"] else "WARNING",
+                "message": check["message"],
+            }
+            for check in checks
+            if not check["passed"]
+        ]
         report = {
             "schema_version": "mediaforge-production-readiness-v1",
             "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -736,6 +761,7 @@ class MediaForgeService:
             "blocking_failures": blocking_failures,
             "warnings": warnings,
             "checks": checks,
+            "production_gaps": production_gaps,
             "next_actions": next_actions,
             "provider": provider,
             "planner": planner,
@@ -7633,6 +7659,43 @@ class MediaForgeService:
             "report": self.delivery_feedback_report(project_id),
         }
 
+    def delivery_feedback_gate(self, project_id: str) -> dict[str, Any]:
+        """Return the closeout gate for unresolved stakeholder feedback.
+
+        Questions can remain open for a later clarification, but an unresolved
+        change request or blocker must be explicitly resolved or dismissed
+        before the project is archived.
+        """
+        project = self._project(project_id)
+        unresolved = [
+            copy.deepcopy(item)
+            for item in project.delivery_feedback
+            if str(item.get("status") or "OPEN").upper()
+            in {"OPEN", "ACKNOWLEDGED"}
+        ]
+        blocking = [
+            item
+            for item in unresolved
+            if str(item.get("severity") or "").upper() == "BLOCKER"
+            or str(item.get("verdict") or "").upper() == "REQUEST_CHANGES"
+        ]
+        return {
+            "passed": not blocking,
+            "unresolved_count": len(unresolved),
+            "blocking_count": len(blocking),
+            "blocking_feedback_ids": [
+                str(item.get("feedback_id"))
+                for item in blocking
+                if item.get("feedback_id")
+            ],
+            "blocking_reasons": sorted(
+                {
+                    "阻断" if str(item.get("severity") or "").upper() == "BLOCKER" else "需要修改"
+                    for item in blocking
+                }
+            ),
+        }
+
     def project_closeout(self, project_id: str) -> dict[str, Any]:
         project = self._project(project_id)
         deliveries = copy.deepcopy(project.deliveries)
@@ -7645,6 +7708,7 @@ class MediaForgeService:
         closeout_report = self._closeout_report(project_id)
         acceptance_report = self._acceptance_report(project_id)
         continuity = self.project_continuity(project_id)
+        feedback_gate = self.delivery_feedback_gate(project_id)
         production_report = self.output_root / project_id / "production-report.json"
         provenance_report = self._provenance_report(project_id)
         distribution_report = self._distribution_report(project_id)
@@ -7692,6 +7756,8 @@ class MediaForgeService:
                 "delivery_verified": delivery_verified,
                 "compliance_passed": compliance["passed"],
                 "continuity_passed": continuity["passed"],
+                "delivery_feedback_gate_passed": feedback_gate["passed"],
+                "delivery_feedback_blocking_count": feedback_gate["blocking_count"],
                 "audit_event_count": len(project.audit_events),
                 "archived": project.archived_at is not None,
             },
@@ -7726,6 +7792,7 @@ class MediaForgeService:
             "governance": {
                 "compliance": compliance,
                 "continuity": continuity,
+                "delivery_feedback_gate": feedback_gate,
                 "distribution": self.distribution_report(project_id),
                 "provenance": self.project_provenance(project_id),
             },
@@ -8168,6 +8235,13 @@ class MediaForgeService:
             raise WorkflowError("release project before closing it out")
         if self._delivery_status(latest_delivery) != "ACCEPTED":
             raise WorkflowError("accept the delivery before closing the project")
+        feedback_gate = self.delivery_feedback_gate(project_id)
+        if not feedback_gate["passed"]:
+            ids = ", ".join(feedback_gate["blocking_feedback_ids"])
+            raise WorkflowError(
+                "resolve or dismiss blocking delivery feedback before closing the project"
+                + (f": {ids}" if ids else "")
+            )
 
         closeout_report = self._closeout_report(project_id)
         acceptance_report = self._acceptance_report(project_id)
@@ -13018,6 +13092,7 @@ class MediaForgeService:
             "release": project.release,
             "delivery_count": len(project.deliveries),
             "delivery_feedback": self._delivery_feedback_summary(project.delivery_feedback),
+            "delivery_feedback_gate": self.delivery_feedback_gate(project.brief.project_id),
             "latest_delivery": (
                 project.deliveries[-1] if project.deliveries else None
             ),
@@ -13153,6 +13228,7 @@ class MediaForgeService:
             "release": project.release,
             "delivery_count": len(project.deliveries),
             "delivery_feedback": self._delivery_feedback_summary(project.delivery_feedback),
+            "delivery_feedback_gate": self.delivery_feedback_gate(project.brief.project_id),
             "latest_delivery": (
                 project.deliveries[-1] if project.deliveries else None
             ),

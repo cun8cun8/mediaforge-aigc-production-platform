@@ -551,7 +551,13 @@ MEDIAFORGE_AUDIT_ANCHOR_TIMEOUT_SECONDS=10
 `POST /projects/{id}/delivery-feedback` 需要审核者角色，`PATCH .../{feedback_id}` 由编辑者
 分派、确认、解决或不采纳；解决和不采纳都必须留下处理结论。反馈与交付回执关联但不改写
 已发布的交付事实，会进入审计链、分发报告、复盘报告以及审核训练数据导出，供下一版本建立
-返工分支和评估样本。对外接收方应通过受控身份账户或企业 SSO 接入，不要将匿名写入端点暴露到公网。
+返工分支和评估样本。项目结项时，`BLOCKER` 或 `REQUEST_CHANGES` 的未处理反馈会阻断归档；
+`GET /projects/{id}` 和 `GET /projects/{id}/summary` 返回 `delivery_feedback_gate`，可在工作台
+或自动化发布流水线中提前检查。对外接收方应通过受控身份账户或企业 SSO 接入，不要将匿名写入端点暴露到公网。
+
+`GET /ops/readiness` 除了 `blocking_failures` 与 `warnings`，还返回 `production_gaps`。每项包含
+`code`、`severity` 和可执行说明；它会明确区分本地闭环可运行、外部服务已配置和可信生产验收，
+不会因为存在 Provider 或 C2PA 配置字符串就误报生产就绪。
 
 ## 权利与模型准入
 

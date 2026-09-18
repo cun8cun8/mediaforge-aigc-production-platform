@@ -192,7 +192,13 @@ def test_operations_readiness_reports_complete_local_runtime(
         "delivery",
         "runtime_metrics",
         "enterprise_runtime",
+        "content_credentials",
     }
+    assert any(
+        gap["code"] == "content_credentials"
+        and gap["severity"] == "WARNING"
+        for gap in payload["production_gaps"]
+    )
 
 
 def test_api_exposes_and_routes_a_multi_provider_pool(
