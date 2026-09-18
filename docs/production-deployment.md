@@ -78,6 +78,15 @@ Worker 镜像或受控挂载提供，通用应用镜像不会包含商业模型�
 （例如 `comfyui`、`replicate`、`local`）。这样各 Worker 只领取自己能执行的路由任务；
 未配置或拼写错误的名称会在 Worker 启动时失败，而不会错误消耗队列任务。
 
+对于 Replicate 的长时云端预测，可将专用 Worker 的
+`MEDIAFORGE_WORKER_EXECUTION_MODE` 设为 `replicate-webhook`。该模式不挂载
+共享媒体目录：Worker 只提交版本固定的预测并用现有 HMAC 回调登记 prediction ID；
+Replicate 使用其原生签名通知 API，API 再下载输出并执行质量门禁。必须为公网 HTTPS
+入口配置 `REPLICATE_WEBHOOK_URL_TEMPLATE`、
+`REPLICATE_WEBHOOK_SIGNING_SECRET` 和 `MEDIAFORGE_CALLBACK_SECRET`，模板中必须
+包含 `{project_id}` 与 `{job_id}`。不要把 Replicate 的 `whsec_` 验签密钥复用为
+MediaForge Worker 回调密钥。
+
 先通过不产生工作流任务的诊断，再在批准成本后运行一次 Provider Probe：
 
 ```powershell

@@ -11,7 +11,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
@@ -25,6 +25,14 @@ class ReplicateProviderError(RuntimeError):
 
 InputBuilder = Callable[[GenerationSpec], dict[str, Any]]
 _MAX_DATA_URI_BYTES = 256 * 1024
+
+
+@dataclass(frozen=True)
+class ReplicateSubmission:
+    prediction_id: str
+    status: str
+    webhook_url: str
+    prediction: dict[str, Any]
 
 
 @dataclass
@@ -41,6 +49,7 @@ class ReplicateVideoProvider:
     http_retry_attempts: int = 2
     http_retry_backoff_seconds: float = 0.5
     cancel_after_seconds: float | None = None
+    webhook_url_template: str | None = None
     name: str = "replicate-video"
 
     def __post_init__(self) -> None:
@@ -58,6 +67,20 @@ class ReplicateVideoProvider:
             raise ValueError(
                 "cancel_after_seconds must be between 5 and 86400 seconds"
             )
+        if self.webhook_url_template is not None:
+            template = self.webhook_url_template.strip()
+            if not template:
+                raise ValueError("webhook_url_template must not be blank")
+            missing = {
+                placeholder
+                for placeholder in {"{project_id}", "{job_id}"}
+                if placeholder not in template
+            }
+            if missing:
+                raise ValueError(
+                    "webhook_url_template must include "
+                    f"{', '.join(sorted(missing))}"
+                )
 
     def supports(self, capability: Capability) -> bool:
         return capability == Capability.IMAGE_TO_VIDEO
@@ -113,6 +136,106 @@ class ReplicateVideoProvider:
             idempotency_key=self._idempotency_key(job_id),
         )
         prediction = self._poll_prediction(prediction, job_id=job_id)
+        return self._archive_prediction_output(
+            prediction,
+            spec=spec,
+            job_id=job_id,
+            output_dir=output_dir,
+            request_metadata={
+                "idempotency_key": self._idempotency_key(job_id),
+                "http_retry_attempts": self.http_retry_attempts,
+                "http_retry_backoff_seconds": self.http_retry_backoff_seconds,
+                "cancel_after": cancel_after,
+                "remote_idempotency": "provider-header",
+                "completion_mode": "polling",
+            },
+        )
+
+    def submit_webhook_prediction(
+        self,
+        spec: GenerationSpec,
+        *,
+        job_id: str,
+    ) -> ReplicateSubmission:
+        """Start an async prediction and ask Replicate for terminal webhooks."""
+        if not self.supports(spec.provider_constraints.capability):
+            raise ReplicateProviderError(
+                "ReplicateVideoProvider only supports image_to_video"
+            )
+        webhook_url = self._render_webhook_url(spec.project_id, job_id)
+        payload = {
+            "version": self.version,
+            "input": self._build_input(spec),
+            "webhook": webhook_url,
+            "webhook_events_filter": ["completed"],
+        }
+        headers: dict[str, str] = {}
+        cancel_after = self._cancel_after_header()
+        if cancel_after:
+            headers["Cancel-After"] = cancel_after
+        prediction = self._request_json(
+            "POST",
+            "/predictions",
+            body=payload,
+            headers=headers or None,
+            idempotency_key=self._idempotency_key(job_id),
+        )
+        prediction_id = str(prediction.get("id") or "").strip()
+        if not prediction_id:
+            raise ReplicateProviderError(
+                "prediction response has no id for webhook reconciliation"
+            )
+        return ReplicateSubmission(
+            prediction_id=prediction_id,
+            status=str(prediction.get("status") or "starting"),
+            webhook_url=webhook_url,
+            prediction=prediction,
+        )
+
+    def archive_webhook_prediction(
+        self,
+        prediction: dict[str, Any],
+        *,
+        spec: GenerationSpec,
+        job_id: str,
+        output_dir: Path,
+    ) -> Artifact:
+        """Persist a verified terminal webhook output before its remote URL expires."""
+        return self._archive_prediction_output(
+            prediction,
+            spec=spec,
+            job_id=job_id,
+            output_dir=output_dir,
+            request_metadata={
+                "idempotency_key": self._idempotency_key(job_id),
+                "cancel_after": self._cancel_after_header(),
+                "remote_idempotency": "provider-webhook",
+                "completion_mode": "webhook",
+            },
+        )
+
+    def cancel_webhook_submission(
+        self,
+        submission: ReplicateSubmission,
+        *,
+        job_id: str,
+    ) -> dict[str, Any]:
+        """Best-effort cleanup if MediaForge cannot persist a submission binding."""
+        return self._cancel_prediction(
+            submission.prediction,
+            prediction_id=submission.prediction_id,
+            job_id=job_id,
+        )
+
+    def _archive_prediction_output(
+        self,
+        prediction: dict[str, Any],
+        *,
+        spec: GenerationSpec,
+        job_id: str,
+        output_dir: Path,
+        request_metadata: dict[str, Any],
+    ) -> Artifact:
         output_url = self._first_output_url(prediction.get("output"))
         # Output URLs may be hosted on a different domain. Never forward the
         # Provider API token to that file host.
@@ -133,13 +256,7 @@ class ReplicateVideoProvider:
                     "job_id": job_id,
                     "prediction": prediction,
                     "version": self.version,
-                    "request": {
-                        "idempotency_key": self._idempotency_key(job_id),
-                        "http_retry_attempts": self.http_retry_attempts,
-                        "http_retry_backoff_seconds": self.http_retry_backoff_seconds,
-                        "cancel_after": cancel_after,
-                        "remote_idempotency": "provider-header",
-                    },
+                    "request": request_metadata,
                 },
                 ensure_ascii=True,
                 indent=2,
@@ -160,6 +277,28 @@ class ReplicateVideoProvider:
             metadata_uri=str(metadata_path),
             created_at=datetime.now(timezone.utc),
         )
+
+    def _render_webhook_url(self, project_id: str, job_id: str) -> str:
+        template = (self.webhook_url_template or "").strip()
+        if not template:
+            raise ReplicateProviderError(
+                "REPLICATE_WEBHOOK_URL_TEMPLATE is required for webhook mode"
+            )
+        try:
+            url = template.format(
+                project_id=quote(project_id, safe=""),
+                job_id=quote(job_id, safe=""),
+            )
+        except (KeyError, ValueError) as exc:
+            raise ReplicateProviderError(
+                "REPLICATE_WEBHOOK_URL_TEMPLATE is invalid"
+            ) from exc
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ReplicateProviderError(
+                "REPLICATE_WEBHOOK_URL_TEMPLATE must render an absolute HTTP(S) URL"
+            )
+        return url
 
     def _build_input(self, spec: GenerationSpec) -> dict[str, Any]:
         if self.input_builder is not None:

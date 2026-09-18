@@ -237,6 +237,7 @@ const PROVIDER_CHECK_LABELS = {
   production_mode: "生产模式",
   provider_pool: "路由池",
   callback_authentication: "回调签名",
+  replicate_webhook_authentication: "Replicate 回调签名",
   warmup: "模型预热",
 };
 
@@ -249,6 +250,7 @@ const PROVIDER_ACTION_LABELS = {
   START_GENERATION: "可以执行生成任务",
   SWITCH_REAL_PROVIDER: "交付前切换真实服务商",
   CONFIGURE_CALLBACK_SECRET: "配置回调密钥",
+  CONFIGURE_REPLICATE_WEBHOOK_SECRET: "配置 Replicate 回调密钥",
   CONFIGURE_LOCAL_PROVIDER: "配置本机 GPU Provider",
 };
 
@@ -261,6 +263,9 @@ const PROVIDER_DETAIL_LABELS = {
   model_version_configured: "模型版本已配置",
   timeout_seconds: "超时时间",
   poll_interval_seconds: "轮询间隔",
+  cancel_after_seconds: "远端取消期限",
+  cancel_after_header: "远端取消请求头",
+  webhook_url_template_configured: "Replicate 回调地址模板已配置",
   estimated_cost: "单次预估成本",
   execution: "执行方式",
   endpoint: "探测端点",
@@ -824,6 +829,9 @@ function localizeProviderDiagnosticMessage(value) {
     "Configure MEDIAFORGE_CALLBACK_SECRET before using production callbacks.": "使用生产回调前请配置 MEDIAFORGE_CALLBACK_SECRET。",
     "Unsigned callbacks are allowed only in local Mock mode.": "仅本地模拟模式允许未签名回调。",
     "Set MEDIAFORGE_CALLBACK_SECRET and restart the service.": "设置 MEDIAFORGE_CALLBACK_SECRET，然后重启服务。",
+    "Replicate native webhook verification is configured.": "Replicate 原生回调签名校验已配置。",
+    "Configure REPLICATE_WEBHOOK_SIGNING_SECRET before using replicate-webhook execution.": "使用 Replicate 回调执行模式前请配置 REPLICATE_WEBHOOK_SIGNING_SECRET。",
+    "Set REPLICATE_WEBHOOK_SIGNING_SECRET and restart the API before using replicate-webhook execution.": "使用 Replicate 回调执行模式前请设置 REPLICATE_WEBHOOK_SIGNING_SECRET 并重启 API。",
     "ComfyUI server is reachable.": "ComfyUI 服务在线。",
     "Replicate API is reachable.": "Replicate API 在线。",
     "Mock Provider is ready.": "模拟服务商已就绪。",

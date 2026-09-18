@@ -653,6 +653,10 @@ def _build_provider_for_mode(mode: str) -> ProviderBundle:
                 if raw_cancel_after
                 else None
             )
+            webhook_url_template = os.getenv(
+                "REPLICATE_WEBHOOK_URL_TEMPLATE",
+                "",
+            ).strip() or None
         except ValueError as exc:
             reason = str(exc)
             return ProviderBundle(
@@ -674,6 +678,7 @@ def _build_provider_for_mode(mode: str) -> ProviderBundle:
                 "timeout_seconds": timeout_seconds,
                 "poll_interval_seconds": poll_interval_seconds,
                 "cancel_after_seconds": cancel_after_seconds,
+                "webhook_url_template_configured": bool(webhook_url_template),
                 "post_retry_requires_idempotency_key": True,
             }
         )
@@ -709,6 +714,7 @@ def _build_provider_for_mode(mode: str) -> ProviderBundle:
             http_retry_attempts=http_retry_attempts,
             http_retry_backoff_seconds=http_retry_backoff_seconds,
             cancel_after_seconds=cancel_after_seconds,
+            webhook_url_template=webhook_url_template,
         )
         details.update(
             {

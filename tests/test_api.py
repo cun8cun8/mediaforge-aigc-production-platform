@@ -60,6 +60,9 @@ def make_client(
     monkeypatch.delenv("MEDIAFORGE_PROVIDERS", raising=False)
     monkeypatch.delenv("REPLICATE_API_TOKEN", raising=False)
     monkeypatch.delenv("REPLICATE_MODEL_VERSION", raising=False)
+    monkeypatch.delenv("REPLICATE_WEBHOOK_URL_TEMPLATE", raising=False)
+    monkeypatch.delenv("REPLICATE_WEBHOOK_SIGNING_SECRET", raising=False)
+    monkeypatch.delenv("REPLICATE_WEBHOOK_MAX_AGE_SECONDS", raising=False)
     monkeypatch.delenv("MEDIAFORGE_CALLBACK_SECRET", raising=False)
     monkeypatch.delenv("MEDIAFORGE_CALLBACK_MAX_AGE_SECONDS", raising=False)
     monkeypatch.delenv("MEDIAFORGE_LICENSE_REGISTRY_SYNC_URL", raising=False)
@@ -2052,6 +2055,236 @@ def test_remote_worker_runs_local_provider_and_completes_signed_callback(
             "RUNNING", "SUCCEEDED"
         }
         assert all(event.details["worker_id"] == "gpu-worker-a" for event in callback_events)
+
+
+def test_replicate_webhook_worker_archives_verified_terminal_output(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    callback_secret = "worker-replicate-callback-secret"
+    webhook_key = b"replicate-webhook-test-key"
+    webhook_secret = "whsec_" + base64.b64encode(webhook_key).decode("ascii")
+    monkeypatch.setenv("MEDIAFORGE_PROVIDER", "replicate")
+    monkeypatch.delenv("MEDIAFORGE_PROVIDERS", raising=False)
+    monkeypatch.setenv("REPLICATE_API_TOKEN", "replicate-token")
+    monkeypatch.setenv("REPLICATE_MODEL_VERSION", "model-version:v1")
+    monkeypatch.setenv(
+        "REPLICATE_WEBHOOK_URL_TEMPLATE",
+        "https://studio.example.test/providers/replicate/webhook?project_id={project_id}&job_id={job_id}",
+    )
+    monkeypatch.setenv("REPLICATE_WEBHOOK_SIGNING_SECRET", webhook_secret)
+    monkeypatch.setenv("MEDIAFORGE_CALLBACK_SECRET", callback_secret)
+    monkeypatch.setenv("MEDIAFORGE_AUTH_MODE", "disabled")
+    source_video = tmp_path / "replicate-result.mp4"
+    create_placeholder_video(source_video, duration_seconds=5, color="#2a9d8f")
+    download_count = 0
+
+    class FileHandler(BaseHTTPRequestHandler):
+        def log_message(self, *_args) -> None:
+            return
+
+        def do_GET(self) -> None:
+            nonlocal download_count
+            assert self.path == "/result.mp4"
+            assert "Authorization" not in self.headers
+            download_count += 1
+            content = source_video.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "video/mp4")
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+
+    class WebhookSubmissionProvider:
+        name = "replicate-video"
+        webhook_url_template = "https://studio.example.test/providers/replicate/webhook?project_id={project_id}&job_id={job_id}"
+
+        def supports(self, capability) -> bool:
+            return capability == Capability.IMAGE_TO_VIDEO
+
+        def estimate_cost(self, _spec) -> float:
+            return 0.2
+
+        def submit_webhook_prediction(self, _spec, *, job_id: str):
+            assert job_id
+            return type("Submission", (), {"prediction_id": "prediction-webhook-1"})()
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), FileHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    app = create_app(output_root=tmp_path)
+    try:
+        with TestClient(app) as client:
+            project_id = "api_replicate_webhook"
+            assert client.post("/projects", json=make_brief(project_id)).status_code == 201
+            plan = client.post(f"/projects/{project_id}/plan").json()
+            shot_id = plan["shots"][0]["shot"]["shot_id"]
+            assert client.post(
+                f"/projects/{project_id}/shots/{shot_id}/enqueue"
+            ).status_code == 200
+
+            def request(base_url, method, path, body=None, *, token=None):
+                response = client.request(method, path, json=body)
+                response.raise_for_status()
+                return response.json()
+
+            def callback(base_url, path, body, *, token=None, callback_secret):
+                data = json.dumps(body, ensure_ascii=True, separators=(",", ":")).encode()
+                timestamp = str(int(time.time()))
+                response = client.post(
+                    path,
+                    content=data,
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-MediaForge-Timestamp": timestamp,
+                        "X-MediaForge-Signature": callback_signature(
+                            callback_secret,
+                            timestamp=timestamp,
+                            method="POST",
+                            path=path,
+                            body=data,
+                        ),
+                    },
+                )
+                response.raise_for_status()
+                return response.json()
+
+            worker = WebhookSubmissionProvider()
+            result = run_remote_worker(
+                base_url="http://testserver",
+                worker_id="replicate-worker-a",
+                capabilities=["image_to_video"],
+                once=True,
+                request_fn=request,
+                callback_fn=callback,
+                callback_secret=callback_secret,
+                execution_mode="replicate-webhook",
+                local_provider=worker,
+            )
+            assert result["processed"] == 1
+            assert result["failed"] == 0
+            job_id = app.state.mediaforge.projects[project_id].shots[shot_id].current_job_id
+            assert job_id
+            queued_job = app.state.mediaforge.jobs.get(job_id)
+            assert queued_job.status == JobStatus.RUNNING
+
+            prediction = {
+                "id": "prediction-webhook-1",
+                "status": "succeeded",
+                "version": "model-version:v1",
+                "output": [
+                    f"http://127.0.0.1:{server.server_port}/result.mp4"
+                ],
+            }
+            raw_body = json.dumps(prediction, separators=(",", ":")).encode("utf-8")
+            webhook_id = "msg_replicate_test_1"
+            timestamp = str(int(time.time()))
+            signature = base64.b64encode(
+                hmac.new(
+                    webhook_key,
+                    f"{webhook_id}.{timestamp}.".encode("utf-8") + raw_body,
+                    hashlib.sha256,
+                ).digest()
+            ).decode("ascii")
+            webhook_path = (
+                "/providers/replicate/webhook?"
+                f"project_id={project_id}&job_id={job_id}"
+            )
+            headers = {
+                "Content-Type": "application/json",
+                "webhook-id": webhook_id,
+                "webhook-timestamp": timestamp,
+                "webhook-signature": f"v1,{signature}",
+            }
+            completed = client.post(webhook_path, content=raw_body, headers=headers)
+            assert completed.status_code == 200
+            assert completed.json()["job"]["status"] == "SUCCEEDED"
+            assert completed.json()["replicate"]["prediction_id"] == "prediction-webhook-1"
+            assert completed.json()["webhook_authentication"]["verified"] is True
+            assert download_count == 1
+            artifact = completed.json()["shot"]["artifact"]
+            metadata = json.loads(Path(artifact["metadata_uri"]).read_text(encoding="utf-8"))
+            assert metadata["request"]["completion_mode"] == "webhook"
+            assert metadata["prediction"]["id"] == "prediction-webhook-1"
+
+            duplicate = client.post(webhook_path, content=raw_body, headers=headers)
+            assert duplicate.status_code == 200
+            assert duplicate.json()["idempotent"] is True
+            assert download_count == 1
+
+            late_webhook_id = "msg_replicate_test_late"
+            late_signature = base64.b64encode(
+                hmac.new(
+                    webhook_key,
+                    f"{late_webhook_id}.{timestamp}.".encode("utf-8") + raw_body,
+                    hashlib.sha256,
+                ).digest()
+            ).decode("ascii")
+            late = client.post(
+                webhook_path,
+                content=raw_body,
+                headers=headers
+                | {"webhook-id": late_webhook_id, "webhook-signature": f"v1,{late_signature}"},
+            )
+            assert late.status_code == 200
+            assert late.json()["ignored"] is True
+            assert download_count == 1
+
+            invalid_headers = headers | {"webhook-signature": "v1,not-base64"}
+            invalid = client.post(webhook_path, content=raw_body, headers=invalid_headers)
+            assert invalid.status_code == 401
+            security = client.get("/providers/replicate/webhook-security")
+            assert security.status_code == 200
+            assert security.json()["configured"] is True
+            assert webhook_secret not in security.text
+            diagnostics = client.get("/providers/diagnostics").json()
+            diagnostic_checks = {
+                item["code"]: item for item in diagnostics["checks"]
+            }
+            assert diagnostic_checks["replicate_webhook_authentication"]["passed"] is True
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+        server.server_close()
+
+
+def test_replicate_webhook_diagnostics_requires_signing_secret(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("MEDIAFORGE_PROVIDER", "replicate")
+    monkeypatch.delenv("MEDIAFORGE_PROVIDERS", raising=False)
+    monkeypatch.setenv("REPLICATE_API_TOKEN", "replicate-token")
+    monkeypatch.setenv("REPLICATE_MODEL_VERSION", "model-version:v1")
+    monkeypatch.setenv(
+        "REPLICATE_WEBHOOK_URL_TEMPLATE",
+        "https://studio.example.test/providers/replicate/webhook?project_id={project_id}&job_id={job_id}",
+    )
+    monkeypatch.delenv("REPLICATE_WEBHOOK_SIGNING_SECRET", raising=False)
+    monkeypatch.setenv("MEDIAFORGE_CALLBACK_SECRET", "worker-callback-secret")
+    monkeypatch.setenv("MEDIAFORGE_AUTH_MODE", "disabled")
+    client = TestClient(create_app(output_root=tmp_path))
+
+    diagnostics = client.get("/providers/diagnostics").json()
+    checks = {item["code"]: item for item in diagnostics["checks"]}
+    assert checks["replicate_webhook_authentication"] == {
+        "code": "replicate_webhook_authentication",
+        "passed": False,
+        "blocking": True,
+        "message": (
+            "Configure REPLICATE_WEBHOOK_SIGNING_SECRET before using "
+            "replicate-webhook execution."
+        ),
+    }
+    assert diagnostics["production_ready"] is False
+    assert "CONFIGURE_REPLICATE_WEBHOOK_SECRET" in {
+        item["code"] for item in diagnostics["next_actions"]
+    }
+    disabled = client.post(
+        "/providers/replicate/webhook?project_id=project_001&job_id=job_001",
+        json={"id": "prediction_001", "status": "succeeded"},
+    )
+    assert disabled.status_code == 503
 
 
 def test_remote_local_worker_rejects_an_unconfigured_provider(

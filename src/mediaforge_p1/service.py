@@ -9839,6 +9839,7 @@ class MediaForgeService:
         actual_cost: float | None = None,
         actor: str = "provider-callback",
         worker_id: str | None = None,
+        external_reference: str | None = None,
     ) -> dict[str, Any]:
         """Reconcile an asynchronous provider event exactly once."""
         project = self._project(project_id)
@@ -9855,16 +9856,16 @@ class MediaForgeService:
             raise WorkflowError("provider callback event_id and provider are required")
         if any(cost is not None and (not math.isfinite(cost) or cost < 0) for cost in (estimated_cost, actual_cost)):
             raise WorkflowError("provider callback costs must be finite and non-negative")
+        clean_external_reference = (
+            str(external_reference).strip() if external_reference is not None else None
+        )
+        if clean_external_reference and len(clean_external_reference) > 240:
+            raise WorkflowError("provider callback external_reference is too long")
 
-        duplicate = next(
-            (
-                event
-                for event in project.audit_events
-                if event.action == "job.provider_callback_received"
-                and event.details.get("job_id") == job_id
-                and event.details.get("callback_event_id") == clean_event_id
-            ),
-            None,
+        duplicate = self._provider_callback_event(
+            project,
+            job_id=job_id,
+            event_id=clean_event_id,
         )
         if duplicate is not None:
             return {
@@ -9923,6 +9924,7 @@ class MediaForgeService:
             "estimated_cost": estimated_cost,
             "actual_cost": actual_cost,
             "worker_id": worker_id,
+            "external_reference": clean_external_reference,
         }
 
         if status == JobStatus.RUNNING:
@@ -10070,6 +10072,160 @@ class MediaForgeService:
         if status == JobStatus.SUCCEEDED and runtime.current_artifact:
             result["shot"] = self.shot_view(runtime)
         return result
+
+    def reconcile_replicate_webhook(
+        self,
+        project_id: str,
+        job_id: str,
+        *,
+        webhook_id: str,
+        prediction: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Reconcile one verified native Replicate delivery into a Job."""
+        project = self._project(project_id)
+        self._ensure_active(project)
+        try:
+            job = self.jobs.get(job_id)
+        except KeyError as exc:
+            raise JobNotFound(job_id) from exc
+        if job.spec.project_id != project_id:
+            raise JobNotFound(job_id)
+        clean_webhook_id = webhook_id.strip()
+        prediction_id = str(prediction.get("id") or "").strip()
+        provider_status = str(prediction.get("status") or "").strip().lower()
+        if not clean_webhook_id or not prediction_id or not provider_status:
+            raise WorkflowError(
+                "Replicate webhook requires id, status, and webhook identifier"
+            )
+        expected_prediction_id = self._replicate_prediction_for_job(project, job_id)
+        if expected_prediction_id != prediction_id:
+            raise WorkflowError("Replicate webhook prediction does not match the job")
+        event_id = f"replicate:{clean_webhook_id}"
+        duplicate = self._provider_callback_event(
+            project,
+            job_id=job_id,
+            event_id=event_id,
+        )
+        if duplicate is not None:
+            return {
+                "project_id": project_id,
+                "job_id": job_id,
+                "event_id": event_id,
+                "idempotent": True,
+                "job": self._job_view(job),
+            }
+        if job.status in {
+            JobStatus.SUCCEEDED,
+            JobStatus.FAILED,
+            JobStatus.CANCELED,
+            JobStatus.QUALITY_REJECTED,
+        }:
+            return {
+                "project_id": project_id,
+                "job_id": job_id,
+                "event_id": event_id,
+                "ignored": True,
+                "reason": f"job is already terminal: {job.status.value}",
+                "job": self._job_view(job),
+            }
+
+        status_mapping = {
+            "starting": JobStatus.RUNNING,
+            "processing": JobStatus.RUNNING,
+            "succeeded": JobStatus.SUCCEEDED,
+            "failed": JobStatus.FAILED,
+            "canceled": JobStatus.CANCELED,
+        }
+        callback_status = status_mapping.get(provider_status)
+        if callback_status is None:
+            raise WorkflowError(
+                f"unsupported Replicate webhook status: {provider_status}"
+            )
+        reason = str(prediction.get("error") or "").strip() or None
+        artifact_uri = None
+        artifact_kind = "video"
+        mime_type = None
+        estimated_cost = None
+        if callback_status == JobStatus.SUCCEEDED:
+            provider = self._provider_named("replicate-video")
+            archive = getattr(provider, "archive_webhook_prediction", None)
+            if not callable(archive):
+                raise WorkflowError("Replicate webhook archiver is not configured")
+            try:
+                artifact = archive(
+                    prediction,
+                    spec=job.spec,
+                    job_id=job_id,
+                    output_dir=self.output_root / project_id / "shots",
+                )
+            except Exception as exc:
+                callback_status = JobStatus.FAILED
+                reason = f"failed to archive Replicate webhook output: {exc}"
+            else:
+                artifact_uri = artifact.uri
+                artifact_kind = artifact.kind
+                mime_type = artifact.mime_type
+                estimated_cost = provider.estimate_cost(job.spec)
+        result = self.provider_callback(
+            project_id,
+            job_id,
+            event_id=event_id,
+            provider="replicate-video",
+            status=callback_status,
+            reason=reason,
+            artifact_uri=artifact_uri,
+            artifact_kind=artifact_kind,
+            mime_type=mime_type,
+            estimated_cost=estimated_cost,
+            actor="replicate-webhook",
+            external_reference=prediction_id,
+        )
+        result["replicate"] = {
+            "prediction_id": prediction_id,
+            "status": provider_status,
+            "webhook_id": clean_webhook_id,
+        }
+        return result
+
+    @staticmethod
+    def _provider_callback_event(
+        project: ProjectRuntime,
+        *,
+        job_id: str,
+        event_id: str,
+    ) -> AuditEvent | None:
+        return next(
+            (
+                event
+                for event in project.audit_events
+                if event.action == "job.provider_callback_received"
+                and event.details.get("job_id") == job_id
+                and event.details.get("callback_event_id") == event_id
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _replicate_prediction_for_job(
+        project: ProjectRuntime,
+        job_id: str,
+    ) -> str:
+        for event in reversed(project.audit_events):
+            if (
+                event.action == "job.provider_callback_received"
+                and event.details.get("job_id") == job_id
+                and event.details.get("provider") == "replicate-video"
+            ):
+                reference = str(event.details.get("external_reference") or "").strip()
+                if reference:
+                    return reference
+        raise WorkflowError("Replicate prediction is not registered for this job")
+
+    def _provider_named(self, name: str) -> GenerationProvider:
+        for registration in self.router.registrations:
+            if registration.provider.name == name:
+                return registration.provider
+        raise WorkflowError(f"Provider is not registered: {name}")
 
     @staticmethod
     def _advance_callback_job_to_running(job: JobRecord) -> None:

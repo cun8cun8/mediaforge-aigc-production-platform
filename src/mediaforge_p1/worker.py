@@ -256,16 +256,21 @@ def run_remote_worker(
         execution_mode
         or os.getenv("MEDIAFORGE_WORKER_EXECUTION_MODE", "api-provider-dispatch")
     ).strip().lower()
-    if selected_mode not in {"api-provider-dispatch", "local-provider-callback"}:
+    if selected_mode not in {
+        "api-provider-dispatch",
+        "local-provider-callback",
+        "replicate-webhook",
+    }:
         raise ValueError(
-            "execution_mode must be api-provider-dispatch or local-provider-callback"
+            "execution_mode must be api-provider-dispatch, "
+            "local-provider-callback, or replicate-webhook"
         )
     request = request_fn or remote_request_json
     clean_capabilities = sorted({item.strip() for item in (capabilities or []) if item.strip()})
     provider = None
     local_artifact_root = None
     resolved_callback_secret = ""
-    if selected_mode == "local-provider-callback":
+    if selected_mode in {"local-provider-callback", "replicate-webhook"}:
         provider = local_provider
         if provider is None:
             bundles = build_provider_bundles_from_env()
@@ -297,15 +302,17 @@ def run_remote_worker(
             if not bundle.configured:
                 raise ValueError(f"Worker Provider is not configured: {bundle.message}")
             provider = bundle.provider
-        configured_root = artifact_root or os.getenv(
-            "MEDIAFORGE_WORKER_ARTIFACT_ROOT", ""
-        ).strip()
-        if not configured_root:
-            raise ValueError(
-                "MEDIAFORGE_WORKER_ARTIFACT_ROOT is required for local-provider-callback"
-            )
-        local_artifact_root = Path(configured_root).expanduser().resolve()
-        local_artifact_root.mkdir(parents=True, exist_ok=True)
+        if selected_mode == "local-provider-callback":
+            configured_root = artifact_root or os.getenv(
+                "MEDIAFORGE_WORKER_ARTIFACT_ROOT", ""
+            ).strip()
+            if not configured_root:
+                raise ValueError(
+                    "MEDIAFORGE_WORKER_ARTIFACT_ROOT is required for "
+                    "local-provider-callback"
+                )
+            local_artifact_root = Path(configured_root).expanduser().resolve()
+            local_artifact_root.mkdir(parents=True, exist_ok=True)
         resolved_callback_secret = (
             callback_secret or os.getenv("MEDIAFORGE_CALLBACK_SECRET", "")
         ).strip()
@@ -324,6 +331,20 @@ def run_remote_worker(
             clean_capabilities = sorted(provider_capabilities)
         if not clean_capabilities:
             raise ValueError("local Worker Provider does not support a known capability")
+        if selected_mode == "replicate-webhook":
+            if str(provider.name) != "replicate-video":
+                raise ValueError(
+                    "replicate-webhook requires the replicate-video Provider"
+                )
+            if not callable(getattr(provider, "submit_webhook_prediction", None)):
+                raise ValueError(
+                    "replicate-webhook Provider does not support webhook submission"
+                )
+            if not str(getattr(provider, "webhook_url_template", "") or "").strip():
+                raise ValueError(
+                    "REPLICATE_WEBHOOK_URL_TEMPLATE is required for "
+                    "replicate-webhook"
+                )
     def current_resources() -> dict[str, Any]:
         resources = worker_resource_snapshot(execution_mode=selected_mode)
         if provider is not None:
@@ -427,9 +448,11 @@ def run_remote_worker(
                 with active_lock:
                     active_job_ids.add(job_id)
                 try:
-                    if selected_mode == "local-provider-callback":
+                    if selected_mode in {
+                        "local-provider-callback",
+                        "replicate-webhook",
+                    }:
                         assert provider is not None
-                        assert local_artifact_root is not None
                         callback_path = (
                             f"/projects/{current_project_id}/jobs/{job_id}/callback"
                         )
@@ -469,6 +492,75 @@ def run_remote_worker(
                             )
                             return False, "leased Worker Provider does not match the routed Provider"
 
+                        generation_spec: GenerationSpec | None = None
+                        if selected_mode == "replicate-webhook":
+                            try:
+                                generation_spec = GenerationSpec.model_validate(spec)
+                                if not provider.supports(
+                                    generation_spec.provider_constraints.capability
+                                ):
+                                    raise ValueError(
+                                        "Replicate Worker Provider does not support "
+                                        f"{generation_spec.provider_constraints.capability.value}"
+                                    )
+                                submission = provider.submit_webhook_prediction(
+                                    generation_spec,
+                                    job_id=job_id,
+                                )
+                            except Exception as exc:
+                                estimated_cost = (
+                                    provider.estimate_cost(generation_spec)
+                                    if generation_spec is not None
+                                    else None
+                                )
+                                send_callback(
+                                    {
+                                        "event_id": f"worker:{worker_id}:{job_id}:failed",
+                                        "provider": active_provider,
+                                        "status": "FAILED",
+                                        "reason": str(exc)[:2000],
+                                        "estimated_cost": estimated_cost,
+                                        "actor": f"worker:{worker_id}",
+                                        "worker_id": worker_id,
+                                    }
+                                )
+                                return False, str(exc)
+                            try:
+                                send_callback(
+                                    {
+                                        "event_id": (
+                                            f"worker:{worker_id}:{job_id}:submitted:"
+                                            f"{submission.prediction_id}"
+                                        ),
+                                        "provider": active_provider,
+                                        "status": "RUNNING",
+                                        "reason": "Replicate prediction submitted for webhook completion.",
+                                        "estimated_cost": provider.estimate_cost(generation_spec),
+                                        "actor": f"worker:{worker_id}",
+                                        "worker_id": worker_id,
+                                        "external_reference": submission.prediction_id,
+                                    }
+                                )
+                            except Exception as exc:
+                                cancel = getattr(
+                                    provider,
+                                    "cancel_webhook_submission",
+                                    None,
+                                )
+                                cancellation = (
+                                    cancel(submission, job_id=job_id)
+                                    if callable(cancel)
+                                    else {"requested": False, "detail": "unsupported"}
+                                )
+                                detail = (
+                                    "remote cancellation requested"
+                                    if cancellation.get("requested")
+                                    else "remote cancellation unavailable"
+                                )
+                                return False, f"submission binding failed: {exc}; {detail}"
+                            return True, None
+
+                        assert local_artifact_root is not None
                         send_callback(
                             {
                                 "event_id": f"worker:{worker_id}:{job_id}:running",
@@ -478,7 +570,6 @@ def run_remote_worker(
                                 "worker_id": worker_id,
                             }
                         )
-                        generation_spec: GenerationSpec | None = None
                         try:
                             generation_spec = GenerationSpec.model_validate(spec)
                             if not provider.supports(
@@ -615,11 +706,18 @@ def main() -> int:
     )
     parser.add_argument(
         "--execution-mode",
-        choices=("api-provider-dispatch", "local-provider-callback"),
+        choices=(
+            "api-provider-dispatch",
+            "local-provider-callback",
+            "replicate-webhook",
+        ),
         default=os.getenv(
             "MEDIAFORGE_WORKER_EXECUTION_MODE", "api-provider-dispatch"
         ),
-        help="Execute through the API or run the configured Provider on this Worker and return a signed callback.",
+        help=(
+            "Execute through the API, run a local Provider and return a signed "
+            "callback, or submit Replicate predictions for native webhooks."
+        ),
     )
     parser.add_argument(
         "--artifact-root",
@@ -634,7 +732,7 @@ def main() -> int:
     parser.add_argument(
         "--provider",
         default=os.getenv("MEDIAFORGE_WORKER_PROVIDER", "").strip() or None,
-        help="Provider name or configured mode for local-provider-callback.",
+        help="Provider name or configured mode for callback execution modes.",
     )
     parser.add_argument(
         "--poll-interval",

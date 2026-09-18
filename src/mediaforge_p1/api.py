@@ -14,6 +14,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from .callback_security import CallbackSecurity, CallbackSecurityError
+from .replicate_webhook import (
+    ReplicateWebhookSecurity,
+    ReplicateWebhookSecurityError,
+)
 from .auth import AuthManager, AuthenticationError, Principal
 from .settlement_callback import SettlementCallbackError, SettlementCallbackSecurity
 from .stripe_settlement import StripeSettlementWebhook
@@ -460,6 +464,7 @@ class ProviderCallbackRequest(BaseModel):
     actual_cost: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     actor: str = Field(default="provider-callback", min_length=1, max_length=120)
     worker_id: str | None = Field(default=None, min_length=1, max_length=120)
+    external_reference: str | None = Field(default=None, min_length=1, max_length=240)
 
 
 class ProjectMemberRequest(BaseModel):
@@ -635,6 +640,7 @@ def create_app(output_root: Path | None = None) -> FastAPI:
     callback_security = CallbackSecurity.from_env(
         provider_mode=("production" if has_declared_real_provider else provider_bundle.mode)
     )
+    replicate_webhook_security = ReplicateWebhookSecurity.from_env()
     settlement_callback_security = SettlementCallbackSecurity.from_env()
     stripe_settlement_webhook = StripeSettlementWebhook.from_env()
     auth_manager = AuthManager.from_env()
@@ -678,6 +684,7 @@ def create_app(output_root: Path | None = None) -> FastAPI:
     )
     app.state.mediaforge = service
     app.state.callback_security = callback_security
+    app.state.replicate_webhook_security = replicate_webhook_security
     app.state.settlement_callback_security = settlement_callback_security
     app.state.stripe_settlement_webhook = stripe_settlement_webhook
     app.state.auth_manager = auth_manager
@@ -732,6 +739,9 @@ def create_app(output_root: Path | None = None) -> FastAPI:
     def is_stripe_settlement_callback_path(path: str, method: str) -> bool:
         return path == "/billing/settlements/stripe" and method.upper() == "POST"
 
+    def is_replicate_webhook_path(path: str, method: str) -> bool:
+        return path == "/providers/replicate/webhook" and method.upper() == "POST"
+
     def project_id_from_path(path: str) -> str | None:
         parts = [part for part in path.split("/") if part]
         if len(parts) < 2 or parts[0] != "projects":
@@ -785,6 +795,18 @@ def create_app(output_root: Path | None = None) -> FastAPI:
                 )
                 principal = Principal(
                     subject="stripe-settlement-webhook",
+                    role="provider",
+                    authenticated=True,
+                )
+            elif is_replicate_webhook_path(request.url.path, request.method):
+                request.state.replicate_webhook_authentication = (
+                    replicate_webhook_security.verify(
+                        request.headers,
+                        await request.body(),
+                    )
+                )
+                principal = Principal(
+                    subject="replicate-webhook",
                     role="provider",
                     authenticated=True,
                 )
@@ -892,7 +914,11 @@ def create_app(output_root: Path | None = None) -> FastAPI:
             response = JSONResponse(status_code=409, content={'detail': str(exc)})
         except ControlPlaneUnavailable as exc:
             response = JSONResponse(status_code=503, content={'detail': str(exc)})
-        except (AuthenticationError, SettlementCallbackError) as exc:
+        except (
+            AuthenticationError,
+            SettlementCallbackError,
+            ReplicateWebhookSecurityError,
+        ) as exc:
             response = JSONResponse(
                 status_code=exc.status_code,
                 content={"detail": str(exc)},
@@ -1303,7 +1329,14 @@ def create_app(output_root: Path | None = None) -> FastAPI:
             for item in provider_statuses
         )
         callback_ready = bool(callback_status["configured"])
+        replicate_webhook_status = replicate_webhook_security.status_view()
+        replicate_webhook_enabled = any(
+            bool((item.get("details") or {}).get("webhook_url_template_configured"))
+            for item in provider_statuses
+            if item.get("mode") == "replicate"
+        )
         diagnostics["callback_security"] = callback_status
+        diagnostics["replicate_webhook_security"] = replicate_webhook_status
         diagnostics["checks"].append(
             {
                 "code": "callback_authentication",
@@ -1331,6 +1364,37 @@ def create_app(output_root: Path | None = None) -> FastAPI:
                     "message": "Set MEDIAFORGE_CALLBACK_SECRET and restart the service.",
                 }
             )
+        if replicate_webhook_enabled:
+            webhook_ready = bool(replicate_webhook_status["configured"])
+            diagnostics["checks"].append(
+                {
+                    "code": "replicate_webhook_authentication",
+                    "passed": webhook_ready,
+                    "blocking": True,
+                    "message": (
+                        "Replicate native webhook verification is configured."
+                        if webhook_ready
+                        else (
+                            "Configure REPLICATE_WEBHOOK_SIGNING_SECRET before "
+                            "using replicate-webhook execution."
+                        )
+                    ),
+                }
+            )
+            if not webhook_ready:
+                diagnostics["production_ready"] = False
+                if diagnostics["grade"] == "READY":
+                    diagnostics["grade"] = "BLOCKED"
+                diagnostics["next_actions"].append(
+                    {
+                        "code": "CONFIGURE_REPLICATE_WEBHOOK_SECRET",
+                        "priority": "blocking",
+                        "message": (
+                            "Set REPLICATE_WEBHOOK_SIGNING_SECRET and restart "
+                            "the API before using replicate-webhook execution."
+                        ),
+                    }
+                )
         return diagnostics
 
     @app.get("/providers/contracts")
@@ -1355,6 +1419,10 @@ def create_app(output_root: Path | None = None) -> FastAPI:
     @app.get("/providers/callback-security")
     def provider_callback_security() -> dict:
         return callback_security.status_view()
+
+    @app.get("/providers/replicate/webhook-security")
+    def replicate_webhook_security_status() -> dict:
+        return replicate_webhook_security.status_view()
 
     @app.get("/ops/readiness")
     def production_readiness() -> dict[str, Any]:
@@ -3259,6 +3327,7 @@ def create_app(output_root: Path | None = None) -> FastAPI:
                 actual_cost=payload.actual_cost,
                 actor=payload.actor,
                 worker_id=payload.worker_id,
+                external_reference=payload.external_reference,
             )
             result["callback_authentication"] = authentication
             return result
@@ -3266,6 +3335,40 @@ def create_app(output_root: Path | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except WorkflowError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/providers/replicate/webhook")
+    async def replicate_webhook(
+        request: Request,
+        project_id: str = Query(min_length=1, max_length=120),
+        job_id: str = Query(min_length=1, max_length=120),
+    ) -> dict:
+        raw_body = await request.body()
+        try:
+            prediction = json.loads(raw_body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise HTTPException(
+                status_code=422,
+                detail="Replicate webhook body must be a JSON object",
+            ) from exc
+        if not isinstance(prediction, dict):
+            raise HTTPException(
+                status_code=422,
+                detail="Replicate webhook body must be a JSON object",
+            )
+        authentication = request.state.replicate_webhook_authentication
+        try:
+            result = service.reconcile_replicate_webhook(
+                project_id,
+                job_id,
+                webhook_id=str(authentication["webhook_id"]),
+                prediction=prediction,
+            )
+        except (ProjectNotFound, JobNotFound, ShotNotFound) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except WorkflowError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        result["webhook_authentication"] = authentication
+        return result
 
     @app.post("/projects/{project_id}/jobs/{job_id}/cancel")
     def cancel_job(project_id: str, job_id: str) -> dict:

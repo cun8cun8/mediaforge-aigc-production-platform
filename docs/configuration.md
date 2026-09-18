@@ -70,6 +70,27 @@ $env:REPLICATE_HTTP_RETRY_BACKOFF_SECONDS = "0.5"
 
 Keep the model version immutable. The adapter sends a per-Job idempotency key, uses bounded retries for transient failures, and requests a remote prediction deadline through `Cancel-After`. If local polling still reaches its timeout, it requests the prediction's `urls.cancel` endpoint before recording the failure. It does not expose the token in diagnostics. See [Replicate Provider Adapter](replicate-provider.md).
 
+### Replicate Native Webhook Worker
+
+Use this only when the API is reachable on a public HTTPS URL. The Worker
+submits the cloud prediction; Replicate's signed terminal callback is received
+by the API, which downloads and quality-checks the output before completing the
+Job.
+
+```powershell
+$env:MEDIAFORGE_WORKER_EXECUTION_MODE = "replicate-webhook"
+$env:MEDIAFORGE_WORKER_PROVIDER = "replicate"
+$env:REPLICATE_WEBHOOK_URL_TEMPLATE = "https://studio.example.com/providers/replicate/webhook?project_id={project_id}&job_id={job_id}"
+$env:REPLICATE_WEBHOOK_SIGNING_SECRET = "whsec_<from-replicate>"
+$env:REPLICATE_WEBHOOK_MAX_AGE_SECONDS = "300"
+$env:MEDIAFORGE_CALLBACK_SECRET = "<long-random-worker-secret>"
+```
+
+Keep the placeholder names exactly as shown. `REPLICATE_WEBHOOK_SIGNING_SECRET`
+is a Replicate webhook verification secret, not the API token and not the
+MediaForge Worker callback secret. Validate non-sensitive configuration with
+`GET /providers/replicate/webhook-security` and `GET /providers/diagnostics`.
+
 ### Multi-Provider Routing
 
 ```powershell

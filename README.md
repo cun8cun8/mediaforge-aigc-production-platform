@@ -146,6 +146,11 @@ python -m mediaforge_p1.provider_probe --provider comfyui --registry D:\secure-c
 python -m mediaforge_p1.provider_probe --provider replicate
 ```
 
+Replicate 默认使用 API 轮询。对于耗时预测，可使用
+`MEDIAFORGE_WORKER_EXECUTION_MODE=replicate-webhook`：Worker 提交预测并登记
+prediction ID，API 只接受经过 Replicate `whsec_` 密钥验证的终态回调，再将输出归档到
+项目目录。完整配置见 [Replicate 接入](docs/replicate-provider.md)。
+
 在生产 Provider 模式下，异步回调必须携带 HMAC-SHA256 签名；控制面会校验回调时间窗、事件幂等性、任务租约和 Provider 路由。详细步骤见 [ComfyUI 接入](docs/comfyui-provider.md)、[Replicate 接入](docs/replicate-provider.md) 和[配置参考](docs/configuration.md)。
 
 ## 从本地到生产

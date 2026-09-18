@@ -1707,6 +1707,67 @@ def test_replicate_provider_submits_polls_and_downloads_video(tmp_path: Path) ->
     assert probe_video(Path(artifact.uri)).valid is True
 
 
+def test_replicate_provider_submits_terminal_webhook_prediction() -> None:
+    requests: list[dict] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_args) -> None:
+            return
+
+        def do_POST(self) -> None:
+            assert self.path == "/v1/predictions"
+            assert self.headers["Authorization"] == "Bearer test-token"
+            assert self.headers["Idempotency-Key"] == "mediaforge-job_webhook"
+            assert self.headers["Cancel-After"] == "5s"
+            length = int(self.headers["Content-Length"])
+            requests.append(json.loads(self.rfile.read(length)))
+            body = json.dumps(
+                {"id": "prediction-webhook", "status": "starting"}
+            ).encode("utf-8")
+            self.send_response(201)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        provider = ReplicateVideoProvider(
+            api_token="test-token",
+            version="model-version:v1",
+            base_url=f"http://127.0.0.1:{server.server_port}/v1",
+            cancel_after_seconds=5,
+            webhook_url_template=(
+                "https://studio.example.test/providers/replicate/webhook?"
+                "project_id={project_id}&job_id={job_id}"
+            ),
+        )
+        submission = provider.submit_webhook_prediction(
+            make_spec(),
+            job_id="job_webhook",
+        )
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+        server.server_close()
+
+    assert submission.prediction_id == "prediction-webhook"
+    assert submission.status == "starting"
+    assert submission.webhook_url.endswith(
+        "project_id=project_001&job_id=job_webhook"
+    )
+    assert requests == [
+        {
+            "version": "model-version:v1",
+            "input": {"prompt": "tense cinematic shot shot_001", "duration": 1},
+            "webhook": submission.webhook_url,
+            "webhook_events_filter": ["completed"],
+        }
+    ]
+
+
 def test_replicate_provider_cancels_remote_prediction_after_local_timeout(
     tmp_path: Path,
 ) -> None:
@@ -1818,6 +1879,10 @@ def test_replicate_provider_can_be_built_from_environment(monkeypatch) -> None:
     monkeypatch.setenv("REPLICATE_TIMEOUT_SECONDS", "240")
     monkeypatch.setenv("REPLICATE_POLL_INTERVAL_SECONDS", "0.5")
     monkeypatch.setenv("REPLICATE_CANCEL_AFTER_SECONDS", "300")
+    monkeypatch.setenv(
+        "REPLICATE_WEBHOOK_URL_TEMPLATE",
+        "https://studio.example.test/providers/replicate/webhook?project_id={project_id}&job_id={job_id}",
+    )
 
     bundle = build_provider_from_env()
 
@@ -1829,12 +1894,14 @@ def test_replicate_provider_can_be_built_from_environment(monkeypatch) -> None:
     assert bundle.provider.timeout_seconds == 240
     assert bundle.provider.poll_interval_seconds == 0.5
     assert bundle.provider.cancel_after_seconds == 300
+    assert bundle.provider.webhook_url_template
     assert bundle.details["http_retry_attempts"] == 4
     assert bundle.details["http_retry_backoff_seconds"] == 0.25
     assert bundle.details["timeout_seconds"] == 240
     assert bundle.details["poll_interval_seconds"] == 0.5
     assert bundle.details["cancel_after_seconds"] == 300
     assert bundle.details["cancel_after_header"] == "300s"
+    assert bundle.details["webhook_url_template_configured"] is True
     assert bundle.details["post_retry_requires_idempotency_key"] is True
 
 

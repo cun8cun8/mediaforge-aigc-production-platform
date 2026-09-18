@@ -405,6 +405,15 @@ On timeout, MediaForge requests Replicate's prediction-specific cancellation
 URL before recording the failed attempt. Non-idempotent `POST` requests are
 never retried automatically.
 
+Set `MEDIAFORGE_WORKER_EXECUTION_MODE=replicate-webhook` together with
+`REPLICATE_WEBHOOK_URL_TEMPLATE` when a public HTTPS control plane should
+receive native Replicate completion events. The URL template must contain both
+`{project_id}` and `{job_id}`. `REPLICATE_WEBHOOK_SIGNING_SECRET` verifies the
+provider's webhook headers independently of `MEDIAFORGE_CALLBACK_SECRET`,
+which still protects the Worker-to-control-plane submission binding. Check the
+non-sensitive receiver configuration at
+`GET /providers/replicate/webhook-security`.
+
 When using `local`, set `MEDIAFORGE_LOCAL_PROVIDER_COMMAND`. The reviewed
 command receives a JSON generation request on stdin and through
 `MEDIAFORGE_REQUEST_PATH`; it must create the exact `MEDIAFORGE_OUTPUT_PATH`

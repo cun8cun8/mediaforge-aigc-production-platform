@@ -154,6 +154,10 @@ def build_provider(
                 os.getenv("REPLICATE_POLL_INTERVAL_SECONDS", "1")
             ),
             cancel_after_seconds=float(raw_cancel_after) if raw_cancel_after else None,
+            webhook_url_template=os.getenv(
+                "REPLICATE_WEBHOOK_URL_TEMPLATE",
+                "",
+            ).strip() or None,
         )
 
     raise ValueError(f"unsupported provider: {provider_name}")

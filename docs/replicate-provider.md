@@ -55,6 +55,32 @@ URL，或由自定义 `input_builder` 按模型要求映射为 `image`、`images
 The sidecar also records the idempotency strategy and retry settings. It never
 stores the API token.
 
+## Native Webhook Mode
+
+Polling remains the default. For long-running production jobs, a dedicated
+Worker can submit an asynchronous prediction and let Replicate deliver only the
+terminal event. Configure a public HTTPS URL template and the signing secret
+retrieved from Replicate's webhook settings:
+
+```text
+REPLICATE_WEBHOOK_URL_TEMPLATE=https://studio.example.com/providers/replicate/webhook?project_id={project_id}&job_id={job_id}
+REPLICATE_WEBHOOK_SIGNING_SECRET=whsec_<base64-key>
+REPLICATE_WEBHOOK_MAX_AGE_SECONDS=300
+MEDIAFORGE_WORKER_EXECUTION_MODE=replicate-webhook
+MEDIAFORGE_WORKER_PROVIDER=replicate
+MEDIAFORGE_CALLBACK_SECRET=<worker-to-control-plane-secret>
+```
+
+The template must retain both placeholders. The Worker submits the prediction,
+then records the returned prediction ID through the signed MediaForge callback.
+`POST /providers/replicate/webhook` verifies Replicate's `webhook-id`,
+`webhook-timestamp`, and `webhook-signature` headers against the raw body;
+only a delivery whose prediction ID matches the recorded Job can advance it.
+For successful terminal events, the API downloads the output into the project
+artifact directory before it applies normal quality, audit, billing, and retry
+rules. Duplicate or late terminal deliveries are acknowledged without
+downloading the output again.
+
 The adapter does not store the API token in a job record, prompt, trace payload,
 or artifact metadata. The artifact `metadata_uri` is carried into the asset
 inventory, trace, Provenance report, and delivery ZIP so operators can audit
