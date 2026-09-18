@@ -3545,6 +3545,9 @@ def test_studio_static_assets_are_served(tmp_path: Path, monkeypatch) -> None:
     assert "模拟预览" in script.text
     assert "remote_cancellation" in script.text
     assert "已向云端服务请求停止" in script.text
+    assert "pendingReadRequests" in script.text
+    assert "scheduleProjectContextRefresh" in script.text
+    assert "retryAfterMilliseconds" in script.text
     assert "/studio/overview" in script.text
     assert "/studio/metrics" in script.text
     assert "/governance/license-registry/validate" in script.text

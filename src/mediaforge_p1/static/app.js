@@ -103,9 +103,13 @@ const state = {
   eventStreamProjectId: null,
   eventStreamRunning: false,
   eventCursor: 0,
+  readRateLimitUntil: 0,
 };
 
 const $ = (id) => document.getElementById(id);
+const pendingReadRequests = new Map();
+const projectContextRequests = new Map();
+const projectContextRefreshTimers = new Map();
 
 const STATUS_LABELS = {
   DRAFT: "草稿",
@@ -501,7 +505,32 @@ function requestErrorMessage(detail, status) {
   return detail?.message || `请求失败：${status}`;
 }
 
-async function request(path, options = {}) {
+function requestMethod(options = {}) {
+  return String(options.method || "GET").toUpperCase();
+}
+
+function isReadRequest(options = {}) {
+  return ["GET", "HEAD"].includes(requestMethod(options));
+}
+
+function retryAfterMilliseconds(response, payload = {}) {
+  const headerValue = Number(response?.headers?.get("Retry-After"));
+  const payloadValue = Number(payload?.rate_limit?.retry_after_seconds);
+  const seconds = Number.isFinite(headerValue) && headerValue > 0
+    ? headerValue
+    : (Number.isFinite(payloadValue) && payloadValue > 0 ? payloadValue : 1);
+  return Math.max(1000, Math.ceil(seconds * 1000));
+}
+
+function rateLimitError(retryAfterMs) {
+  const seconds = Math.max(1, Math.ceil(retryAfterMs / 1000));
+  const error = new Error(`请求过于频繁，请在 ${seconds} 秒后重试。`);
+  error.rateLimited = true;
+  error.retryAfterMs = retryAfterMs;
+  return error;
+}
+
+async function performRequest(path, options = {}) {
   const token = window.localStorage.getItem("mediaforge.apiToken") || "";
   const response = await fetch(path, {
     ...options,
@@ -514,17 +543,41 @@ async function request(path, options = {}) {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (response.status === 429) {
-      const retryAfter = Number(response.headers.get("Retry-After"));
-      throw new Error(
-        Number.isFinite(retryAfter) && retryAfter > 0
-          ? `请求过于频繁，请在 ${retryAfter} 秒后重试。`
-          : "请求过于频繁，请稍后重试。",
-      );
+      const retryAfterMs = retryAfterMilliseconds(response, payload);
+      if (isReadRequest(options)) {
+        state.readRateLimitUntil = Math.max(
+          state.readRateLimitUntil,
+          Date.now() + retryAfterMs,
+        );
+      }
+      throw rateLimitError(retryAfterMs);
     }
     const message = requestErrorMessage(payload.detail, response.status);
     throw new Error(localizeErrorMessage(message));
   }
   return payload;
+}
+
+async function request(path, options = {}) {
+  const readRequest = isReadRequest(options);
+  const remainingMs = state.readRateLimitUntil - Date.now();
+  if (readRequest && remainingMs > 0) {
+    throw rateLimitError(remainingMs);
+  }
+  if (!readRequest) return performRequest(path, options);
+
+  const requestKey = `${requestMethod(options)}:${state.identityGeneration}:${path}`;
+  const pending = pendingReadRequests.get(requestKey);
+  if (pending) return pending;
+  const task = performRequest(path, options);
+  pendingReadRequests.set(requestKey, task);
+  try {
+    return await task;
+  } finally {
+    if (pendingReadRequests.get(requestKey) === task) {
+      pendingReadRequests.delete(requestKey);
+    }
+  }
 }
 
 async function loadAuthStatus() {
@@ -720,6 +773,8 @@ async function saveAuthToken() {
   $("memorySearchButton").disabled = true;
   $("memoryResultCount").textContent = "0 条";
   $("memoryStatus").textContent = "待重新选择项目";
+  state.readRateLimitUntil = 0;
+  pendingReadRequests.clear();
   const token = $("authTokenInput").value.trim();
   if (token) window.localStorage.setItem("mediaforge.apiToken", token);
   else window.localStorage.removeItem("mediaforge.apiToken");
@@ -1527,10 +1582,22 @@ function handleProjectEvent(projectId, id, eventName, data) {
   try {
     const payload = JSON.parse(data);
     if (payload.action) logEvent(auditEventText(payload), "muted");
-    loadProjectContext(projectId).catch((error) => logEvent(error.message, "muted"));
+    scheduleProjectContextRefresh(projectId);
   } catch (error) {
     logEvent(`实时事件解析失败：${error.message}`, "muted");
   }
+}
+
+function scheduleProjectContextRefresh(projectId, delayMs = 180) {
+  if (!projectId || state.projectId !== projectId) return;
+  if (projectContextRefreshTimers.has(projectId)) return;
+  const timer = window.setTimeout(() => {
+    projectContextRefreshTimers.delete(projectId);
+    loadProjectContext(projectId).catch((error) => {
+      if (!error.rateLimited) logEvent(error.message, "muted");
+    });
+  }, delayMs);
+  projectContextRefreshTimers.set(projectId, timer);
 }
 
 function consumeSseBlock(projectId, block) {
@@ -1565,6 +1632,15 @@ async function runProjectEventStream(projectId, controller) {
         }
       );
       if (!response.ok || !response.body) {
+        if (response.status === 429) {
+          const payload = await response.json().catch(() => ({}));
+          const retryAfterMs = retryAfterMilliseconds(response, payload);
+          state.readRateLimitUntil = Math.max(
+            state.readRateLimitUntil,
+            Date.now() + retryAfterMs,
+          );
+          throw rateLimitError(retryAfterMs);
+        }
         throw new Error(`实时事件请求失败（${response.status}）`);
       }
       const reader = response.body.getReader();
@@ -1587,7 +1663,12 @@ async function runProjectEventStream(projectId, controller) {
       if (!shouldReconnect || controller.signal.aborted) break;
     } catch (error) {
       if (controller.signal.aborted) break;
-      logEvent(`实时事件连接中断：${error.message}`, "muted");
+      if (!error.rateLimited) {
+        logEvent(`实时事件连接中断：${error.message}`, "muted");
+      }
+      const retryAfterMs = error.retryAfterMs || 1000;
+      if (!controller.signal.aborted) await waitFor(retryAfterMs);
+      continue;
     }
     if (!controller.signal.aborted) await waitFor(1000);
   }
@@ -1709,6 +1790,32 @@ function connectCollaborationEvents(projectId) {
 }
 
 async function loadProjectContext(projectId) {
+  if (!projectId) return;
+  const active = projectContextRequests.get(projectId);
+  if (active) {
+    active.refreshQueued = true;
+    return active.promise;
+  }
+  const entry = {promise: null, refreshQueued: false};
+  const task = loadProjectContextNow(projectId);
+  entry.promise = task;
+  projectContextRequests.set(projectId, entry);
+  let completed = false;
+  try {
+    const result = await task;
+    completed = true;
+    return result;
+  } finally {
+    if (projectContextRequests.get(projectId) === entry) {
+      projectContextRequests.delete(projectId);
+    }
+    if (completed && entry.refreshQueued && state.projectId === projectId) {
+      scheduleProjectContextRefresh(projectId, 80);
+    }
+  }
+}
+
+async function loadProjectContextNow(projectId) {
   if (!projectId) return;
   const generation = ++state.projectGeneration;
   const identityGeneration = state.identityGeneration;
