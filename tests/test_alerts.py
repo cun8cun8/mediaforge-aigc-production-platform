@@ -65,6 +65,83 @@ def test_operations_alert_settings_validate_environment(monkeypatch) -> None:
         OperationsAlertSettings.from_env()
 
 
+def test_operations_alerts_report_provider_circuit_isolation() -> None:
+    settings = OperationsAlertSettings(
+        queue_depth=25,
+        queue_wait_seconds=300,
+        failure_rate=0.25,
+        minimum_terminal_jobs=5,
+        spend_ratio=0.9,
+        stale_worker_seconds=900,
+        require_production_ready=False,
+    )
+    shared = {
+        "settings": settings,
+        "studio_metrics": {"jobs": {}, "cost": {}},
+        "runtime_metrics": {"total_attempts": 0, "providers": []},
+        "workers": {"workers": []},
+        "production_readiness": {"production_ready": True},
+    }
+    warning = evaluate_operations_alerts(
+        **shared,
+        provider_circuits={
+            "enabled": True,
+            "routing": {
+                "temporarily_unavailable_provider_count": 1,
+                "all_enabled_providers_temporarily_unavailable": False,
+            },
+        },
+    )
+    assert warning["grade"] == "WARNING"
+    assert warning["alerts"] == [
+        {
+            "code": "PROVIDER_CIRCUIT_OPEN",
+            "severity": "warning",
+            "summary": "One or more Providers are temporarily isolated by the circuit breaker.",
+            "observed": 1,
+            "threshold": 0,
+            "source": "provider_circuit_breaker.routing",
+        }
+    ]
+
+    critical = evaluate_operations_alerts(
+        **shared,
+        provider_circuits={
+            "enabled": True,
+            "routing": {
+                "temporarily_unavailable_provider_count": 2,
+                "all_enabled_providers_temporarily_unavailable": True,
+            },
+        },
+    )
+    assert critical["grade"] == "CRITICAL"
+    assert critical["alerts"][0]["code"] == "PROVIDER_CIRCUIT_OPEN"
+    assert critical["alerts"][0]["severity"] == "critical"
+
+
+def test_service_alerts_when_all_enabled_provider_circuits_are_open(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("MEDIAFORGE_PROVIDER_CIRCUIT_FAILURE_THRESHOLD", "1")
+    service = MediaForgeService(tmp_path)
+    service.router.circuit_breaker.record_failure(
+        "mock-provider",
+        error="upstream outage",
+    )
+
+    report = service.operations_alerts()
+
+    assert report["grade"] == "CRITICAL"
+    alert = next(
+        item
+        for item in report["alerts"]
+        if item["code"] == "PROVIDER_CIRCUIT_OPEN"
+    )
+    assert alert["severity"] == "critical"
+    assert "PROVIDER_CIRCUIT_OPEN" in service.operations_alerts_prometheus()
+
+
 def test_service_and_api_expose_operations_alerts(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("MEDIAFORGE_ALERT_QUEUE_DEPTH", "1")
     monkeypatch.setenv("MEDIAFORGE_ALERT_REQUIRE_PRODUCTION_READY", "true")

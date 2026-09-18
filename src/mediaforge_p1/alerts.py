@@ -104,6 +104,7 @@ def evaluate_operations_alerts(
     runtime_metrics: dict[str, Any],
     workers: dict[str, Any],
     production_readiness: dict[str, Any],
+    provider_circuits: dict[str, Any] | None = None,
 ) -> dict[str, object]:
     """Evaluate deterministic operations thresholds without external side effects."""
     alerts: list[OperationsAlert] = []
@@ -190,6 +191,35 @@ def evaluate_operations_alerts(
                 observed=round(provider_failure_rate, 4),
                 threshold=settings.failure_rate,
                 source="runtime_metrics.providers.outcomes.failed",
+            ))
+
+    circuit_status = provider_circuits if isinstance(provider_circuits, dict) else {}
+    circuit_routing = (
+        circuit_status.get("routing")
+        if isinstance(circuit_status.get("routing"), dict)
+        else {}
+    )
+    if bool(circuit_status.get("enabled")):
+        open_count = int(
+            circuit_routing.get("temporarily_unavailable_provider_count") or 0
+        )
+        if open_count:
+            all_blocked = bool(
+                circuit_routing.get(
+                    "all_enabled_providers_temporarily_unavailable"
+                )
+            )
+            alerts.append(OperationsAlert(
+                code="PROVIDER_CIRCUIT_OPEN",
+                severity="critical" if all_blocked else "warning",
+                summary=(
+                    "All enabled Providers are temporarily isolated by the circuit breaker."
+                    if all_blocked
+                    else "One or more Providers are temporarily isolated by the circuit breaker."
+                ),
+                observed=open_count,
+                threshold=0,
+                source="provider_circuit_breaker.routing",
             ))
 
     if settings.require_production_ready and not production_readiness.get("production_ready"):

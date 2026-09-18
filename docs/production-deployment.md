@@ -168,7 +168,9 @@ before admitting production traffic.
 
 `GET /ops/alerts` derives a deterministic `HEALTHY`, `WARNING`, or `CRITICAL`
 grade from queue depth and wait time, terminal-job and Provider failure rates,
-studio spend, stale Worker heartbeats, and optional strict production readiness.
+studio spend, stale Worker heartbeats, Provider circuit isolation, and optional
+strict production readiness. A partially isolated Provider pool is a warning;
+when every enabled Provider is isolated, PROVIDER_CIRCUIT_OPEN is critical.
 The same active-alert gauges are exposed through `/metrics` for Prometheus or
 another collector. The API does not transmit telemetry or invoke webhooks on its
 own, so alert routing remains under the deployment team's control.

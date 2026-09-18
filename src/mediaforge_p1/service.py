@@ -379,6 +379,7 @@ class MediaForgeService:
             runtime_metrics=self.runtime_metrics_view(),
             workers=self.worker_status(),
             production_readiness=readiness,
+            provider_circuits=self.provider_circuit_status(),
         )
 
     def operations_alerts_prometheus(self) -> str:
@@ -14584,6 +14585,39 @@ class MediaForgeService:
         status = self.router.circuit_breaker.status_view(
             [registration.provider.name for registration in self.router.registrations]
         )
+        circuit_by_provider = {
+            str(item["provider"]): item
+            for item in status["providers"]
+        }
+        enabled_registrations = [
+            registration
+            for registration in self.router.registrations
+            if registration.enabled
+        ]
+        temporarily_unavailable = [
+            registration.provider.name
+            for registration in enabled_registrations
+            if not bool(
+                (circuit_by_provider.get(registration.provider.name) or {}).get(
+                    "available",
+                    True,
+                )
+            )
+        ]
+        status["routing"] = {
+            "registered_provider_count": len(self.router.registrations),
+            "enabled_provider_count": len(enabled_registrations),
+            "temporarily_unavailable_provider_count": len(
+                temporarily_unavailable
+            ),
+            "temporarily_unavailable_providers": sorted(
+                temporarily_unavailable
+            ),
+            "all_enabled_providers_temporarily_unavailable": bool(
+                enabled_registrations
+                and len(temporarily_unavailable) == len(enabled_registrations)
+            ),
+        }
         shared_on_failover = bool(
             self.state_backend == "postgres"
             and self.enterprise.control_plane.enabled

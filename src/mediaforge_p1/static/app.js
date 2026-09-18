@@ -1197,7 +1197,7 @@ function renderOverview() {
     ? "var(--coral)" : warningAlerts ? "var(--yellow)" : "var(--mint)";
   const firstAlert = Array.isArray(alerts.alerts) ? alerts.alerts[0] : null;
   $("overviewAlertsNote").textContent = firstAlert
-    ? `${firstAlert.code} · ${firstAlert.summary}`
+    ? [firstAlert.code, localizeOperationsAlertSummary(firstAlert)].join(" · ")
     : alertGrade === "HEALTHY" ? "队列、预算、Provider 与 Worker 指标正常。" : "正在计算运营告警。";
   const enterprise = state.enterpriseStatus || {};
   const billing = state.billingSummary || {};
@@ -1213,6 +1213,20 @@ function renderOverview() {
     + (overview.job_counts?.VALIDATED || 0)
     + (overview.job_counts?.ADMITTED || 0);
   $("overviewUpdated").textContent = openJobs ? `${openJobs} 个任务处理中` : "就绪";
+}
+
+function localizeOperationsAlertSummary(alert) {
+  const summaries = {
+    QUEUE_DEPTH_HIGH: "排队生成任务超过当前容量阈值。",
+    QUEUE_WAIT_HIGH: "平均排队时长超过服务等级阈值。",
+    JOB_FAILURE_RATE_HIGH: "终态生成任务失败率超过错误预算。",
+    STUDIO_SPEND_HIGH: "项目集支出已达到预算保护阈值。",
+    WORKER_HEARTBEAT_STALE: "一个或多个远程 Worker 心跳已过期。",
+    PROVIDER_FAILURE_RATE_HIGH: "服务商执行失败率超过错误预算。",
+    PROVIDER_CIRCUIT_OPEN: "服务商熔断保护正在隔离故障服务商。",
+    PRODUCTION_READINESS_BLOCKED: "生产就绪状态不满足严格上线要求。",
+  };
+  return summaries[String(alert?.code || "")] || String(alert?.summary || "运行告警需要处理。");
 }
 
 function renderDetailPanels() {
