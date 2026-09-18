@@ -4165,11 +4165,25 @@ def test_required_auth_enforces_roles_and_tenant_isolation(
         headers=viewer_a,
         json={},
     ).status_code == 403
-    assert client.post(
+    service = client.app.state.mediaforge
+    provider = service.provider
+    service.router = ProviderRouter(
+        [ProviderRegistration(provider=provider, priority=1)],
+        circuit_breaker=ProviderCircuitBreaker(
+            ProviderCircuitBreakerSettings(failure_threshold=1, open_seconds=60)
+        ),
+    )
+    service.router.circuit_breaker.record_failure(
+        provider.name,
+        error="authenticated recovery test",
+    )
+    recovered = client.post(
         "/providers/mock-provider/circuit/recover",
         headers=admin,
-        json={},
-    ).status_code == 422
+        json={"actor": "spoofed-operator"},
+    )
+    assert recovered.status_code == 200
+    assert recovered.json()["operation"]["actor"] == "governance"
     assert client.post(
         "/governance/license-registry/sync",
         headers=admin,

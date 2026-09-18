@@ -102,6 +102,9 @@ passes. It rejects a closed or half-open circuit, a configuration-only probe,
 and any failed probe; the endpoint is deliberately not a force-enable switch.
 Use GET /providers/operations to review the bounded, persisted Provider
 operation history, including automatic isolation and successful recovery.
+When API-key or OIDC authentication is enabled, a recovery record uses the
+authenticated subject as its actor; a client-provided actor field cannot
+impersonate another operator.
 
 ### Replicate Native Webhook Worker
 

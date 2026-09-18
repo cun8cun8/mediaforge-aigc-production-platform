@@ -1347,11 +1347,18 @@ def create_app(output_root: Path | None = None) -> FastAPI:
     def recover_provider_circuit(
         provider_name: str,
         payload: ProviderCircuitRecoveryRequest,
+        request: Request,
     ) -> dict[str, Any]:
         try:
+            principal = request.state.principal
+            actor = (
+                principal.subject
+                if principal.authenticated
+                else payload.actor
+            )
             return service.recover_provider_circuit(
                 provider_name,
-                actor=payload.actor,
+                actor=actor,
             )
         except WorkflowError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

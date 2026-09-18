@@ -374,6 +374,8 @@ POST /providers/{provider_name}/circuit/recover 提前恢复路由。该接口�
 强制启用接口。
 运维记录可通过 GET /providers/operations 查看；记录包含服务商、操作者、时间、前后
 状态和脱敏后的健康探测摘要，并随控制面快照持久化。
+启用 API Key 或 OIDC 后，恢复审计中的操作者强制取自已认证主体，不采用客户端提交的
+actor 字段，避免运维记录被伪造；仅禁用认证的本地开发模式保留该字段用于演示标记。
 
 用量计费台账写入 `MEDIAFORGE_BILLING_DB`，事件以 `(tenant_id, event_id)` 幂等；旧表会
 在事务中迁移并保留记录。Provider 成功
