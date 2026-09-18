@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from PIL import Image, ImageStat
+from PIL import Image, ImageDraw, ImageStat
 
 
 class FFmpegUnavailable(RuntimeError):
@@ -92,6 +92,52 @@ def create_placeholder_video(
     if result.returncode != 0 or not output_path.exists():
         raise RuntimeError(f"FFmpeg video creation failed: {result.stderr.strip()}")
     return output_path
+
+
+def create_preview_video(
+    output_path: Path,
+    *,
+    duration_seconds: float,
+    color: str,
+    title: str,
+    subtitle: str = "",
+    size: tuple[int, int] = (640, 360),
+) -> Path:
+    """Create a visible, clearly-labelled preview clip for local Mock runs."""
+    if duration_seconds <= 0:
+        raise ValueError("preview duration_seconds must be > 0")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    preview_image = output_path.with_suffix(".preview.png")
+    width, height = size
+    safe_title = str(title).encode("ascii", errors="replace").decode("ascii")
+    safe_subtitle = str(subtitle).encode("ascii", errors="replace").decode("ascii")
+    image = Image.new("RGB", size, color)
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((0, 0, width, 10), fill="#f1faee")
+    draw.rectangle((0, height - 12, width, height), fill="#111827")
+    draw.rounded_rectangle(
+        (28, 42, width - 28, height - 42),
+        radius=14,
+        fill="#0f172a",
+        outline="#f1faee",
+        width=2,
+    )
+    draw.text((48, 64), "MEDIAFORGE MOCK PREVIEW", fill="#f1faee")
+    draw.text((48, 118), safe_title[:80], fill="#ffffff")
+    if safe_subtitle:
+        draw.text((48, 154), safe_subtitle[:96], fill="#dbeafe")
+    draw.text((48, height - 76), "FLOW VALIDATION / NOT REAL MODEL OUTPUT", fill="#f1faee")
+    draw.ellipse((width - 100, 76, width - 54, 122), fill="#e76f51", outline="#ffffff", width=2)
+    image.save(preview_image, format="PNG")
+    try:
+        return create_video_from_image(
+            preview_image,
+            output_path,
+            duration_seconds=duration_seconds,
+            size=f"{width}x{height}",
+        )
+    finally:
+        preview_image.unlink(missing_ok=True)
 
 
 def create_placeholder_audio(

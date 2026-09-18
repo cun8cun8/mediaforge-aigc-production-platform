@@ -13,7 +13,7 @@ from uuid import uuid4
 from PIL import Image, ImageDraw
 
 from .contracts import Artifact, Capability, GenerationSpec
-from .media import create_placeholder_video, probe_image, probe_video, sha256_file
+from .media import create_preview_video, probe_image, probe_video, sha256_file
 
 
 class GenerationProvider(Protocol):
@@ -157,10 +157,15 @@ class MockProvider:
         else:
             path = output_dir / f"{artifact_id}.mp4"
             color = self._color_for(spec.shot_id)
-            create_placeholder_video(
+            create_preview_video(
                 path,
                 duration_seconds=spec.intent.duration_seconds,
                 color=color,
+                title=f"{spec.project_id} / {spec.shot_id}",
+                subtitle=(
+                    f"{spec.intent.shot_type} / {spec.intent.camera_motion} / "
+                    f"{spec.intent.mood}"
+                ),
             )
             kind = "video"
             mime_type = "video/mp4"

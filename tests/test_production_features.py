@@ -329,6 +329,15 @@ def test_recheck_failure_blocks_approval_and_invalidates_delivery(tmp_path, monk
     project = service.projects["production_test"]
     project.final_mp4 = "previous-export.mp4"
     project.delivery_package = "previous-delivery.zip"
+    # Use an intentionally flat clip so this test exercises the failing visual gate.
+    artifact_path = Path(project.shots[shot_id].current_artifact["uri"])
+    create_placeholder_video(
+        artifact_path,
+        duration_seconds=5,
+        color="#334455",
+    )
+    project.shots[shot_id].current_artifact["sha256"] = sha256_file(artifact_path)
+    project.shots[shot_id].current_artifact["size_bytes"] = artifact_path.stat().st_size
     monkeypatch.setenv("MEDIAFORGE_VISUAL_GATE", "true")
     result = service.recheck_shot_quality("production_test", shot_id)
     assert result["quality"]["visual_evaluation"]["frames"]

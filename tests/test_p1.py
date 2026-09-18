@@ -50,6 +50,7 @@ from mediaforge_p1.contracts import (
 from mediaforge_p1.jobs import InvalidTransition, JobLeasePolicy, JobStore, RetryPolicy
 from mediaforge_p1.media import (
     SubtitleCue,
+    find_ffmpeg,
     mix_audio,
     probe_audio,
     probe_image,
@@ -261,6 +262,15 @@ def test_mock_provider_creates_a_probeable_video(tmp_path: Path) -> None:
     assert result.valid is True
     assert result.width == 640
     assert result.height == 360
+    ffmpeg, _ = find_ffmpeg()
+    frame_path = tmp_path / "mock-preview-frame.png"
+    subprocess.run(
+        [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-ss", "0.2", "-i", artifact.uri, "-frames:v", "1", str(frame_path)],
+        check=True,
+    )
+    with Image.open(frame_path) as frame:
+        colors = frame.convert("RGB").getcolors(maxcolors=640 * 360)
+    assert colors is not None and len(colors) > 8
 
 
 def test_probe_image_and_image_quality_report(tmp_path: Path) -> None:
