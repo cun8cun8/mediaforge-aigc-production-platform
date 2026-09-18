@@ -24,6 +24,7 @@ const state = {
   retrospective: null,
   providerStatus: null,
   providerDiagnostics: null,
+  providerOperations: [],
   providerContract: null,
   lipsyncStatus: null,
   sourceOcrStatus: null,
@@ -808,6 +809,7 @@ async function loadProviderStatus() {
     const status = await request("/providers/status");
     state.providerStatus = status;
     state.providerDiagnostics = null;
+    await loadProviderOperations();
     const stateLabel = status.mode === "mock"
       ? "模拟模式"
       : (status.configured ? "服务商已配置" : "服务商不可用");
@@ -820,6 +822,15 @@ async function loadProviderStatus() {
     $("connectionState").innerHTML = `<i></i> API 状态未知`;
     $("connectionState").classList.add("connection-warning");
     $("providerMessage").textContent = "服务商配置读取失败。";
+  }
+}
+
+async function loadProviderOperations() {
+  try {
+    const report = await request("/providers/operations?limit=50");
+    state.providerOperations = report.operations || [];
+  } catch (error) {
+    state.providerOperations = [];
   }
 }
 
@@ -988,6 +999,7 @@ function renderProviderCenter() {
     `).join("")
     : `<div class="policy-row"><strong>暂无处理建议</strong><span>当前没有额外的服务商操作。</span></div>`;
   renderProviderRecovery(circuits);
+  renderProviderOperations();
   renderProviderContract();
 }
 
@@ -1007,6 +1019,31 @@ function renderProviderRecovery(circuits) {
   if (!isolated.length) {
     $("providerRecoveryResult").textContent = "没有处于隔离状态的服务商。";
   }
+}
+
+function renderProviderOperations() {
+  const operations = state.providerOperations || [];
+  const actionLabels = {
+    "circuit.opened": "自动隔离",
+    "circuit.recovered": "成功后自动恢复",
+    "circuit.recovered.manual": "人工恢复路由",
+  };
+  $("providerOperationCount").textContent = String(operations.length) + " 条";
+  $("providerOperationList").innerHTML = operations.length
+    ? operations.slice(0, 12).map((operation) => {
+      const action = actionLabels[operation.action] || operation.action || "服务商操作";
+      const health = operation.health || {};
+      const healthLabel = health.healthy === true
+        ? "健康检查通过"
+        : health.healthy === false ? "健康检查未通过" : "未执行主动探测";
+      return [
+        '<div class="policy-row">',
+        "<strong>" + escapeHtml(action) + " · " + escapeHtml(providerNameLabel(operation.provider)) + "</strong>",
+        "<span>" + escapeHtml(operation.actor || "系统") + " · " + escapeHtml(healthLabel) + " · " + escapeHtml(formatTimestamp(operation.occurred_at)) + "</span>",
+        "</div>",
+      ].join("");
+    }).join("")
+    : '<div class="policy-row"><strong>暂无服务商运维记录</strong><span>熔断隔离和恢复操作会在这里留下可追溯记录。</span></div>';
 }
 
 function renderProviderContract() {
@@ -3658,6 +3695,7 @@ async function checkProviderHealth() {
     const health = diagnostics.health;
     state.providerStatus = diagnostics.status;
     state.providerDiagnostics = diagnostics;
+    await loadProviderOperations();
     renderProviderCenter();
     const label = health.healthy
       ? `${diagnostics.grade === "SIMULATION" ? "模拟服务商在线" : "服务商在线"} · ${health.provider}`
@@ -3711,6 +3749,15 @@ async function recoverProviderCircuit() {
       },
     );
     await checkProviderHealth();
+    if (result.operation) {
+      state.providerOperations = [
+        result.operation,
+        ...(state.providerOperations || []).filter(
+          (operation) => operation.operation_id !== result.operation.operation_id,
+        ),
+      ].slice(0, 50);
+      renderProviderOperations();
+    }
     $("providerRecoveryResult").textContent = providerNameLabel(result.provider) + " 已通过健康检查并恢复路由。";
     logEvent($("providerRecoveryResult").textContent, "muted");
   } catch (error) {

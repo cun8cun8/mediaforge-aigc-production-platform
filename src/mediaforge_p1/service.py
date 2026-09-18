@@ -262,6 +262,7 @@ class MediaForgeService:
         self._control_plane_lock = RLock()
         self.projects: dict[str, ProjectRuntime] = {}
         self.workers: dict[str, dict[str, Any]] = {}
+        self.provider_operations: list[dict[str, Any]] = []
         self.retry_policy = RetryPolicy.from_env()
         self.job_lease_policy = JobLeasePolicy.from_env()
         self.jobs = JobStore(max_attempts=self.retry_policy.max_attempts)
@@ -479,6 +480,7 @@ class MediaForgeService:
         """Discard standby memory before it becomes the PostgreSQL snapshot writer."""
         self.projects = {}
         self.workers = {}
+        self.provider_operations = []
         self.jobs = JobStore(max_attempts=self.retry_policy.max_attempts)
         self.license_registry = LicenseRegistry.from_env()
         self.license_registry_metadata = {
@@ -14686,6 +14688,57 @@ class MediaForgeService:
         }
         return status
 
+    def provider_operations_view(self, *, limit: int = 50) -> dict[str, Any]:
+        safe_limit = max(1, min(int(limit), 200))
+        operations = copy.deepcopy(self.provider_operations[-safe_limit:])
+        operations.reverse()
+        return {
+            "schema_version": "mediaforge-provider-operations-v1",
+            "count": len(operations),
+            "operations": operations,
+        }
+
+    def _record_provider_operation(
+        self,
+        *,
+        action: str,
+        provider_name: str,
+        actor: str,
+        circuit: dict[str, Any] | None = None,
+        health: dict[str, Any] | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        circuit = circuit or {}
+        health = health or {}
+        health_summary = {
+            key: health.get(key)
+            for key in (
+                "configured",
+                "reachable",
+                "healthy",
+                "probe",
+                "latency_ms",
+                "message",
+            )
+            if key in health
+        }
+        if isinstance(health_summary.get("message"), str):
+            health_summary["message"] = health_summary["message"][:500]
+        operation = {
+            "operation_id": f"provider_op_{uuid4().hex[:20]}",
+            "occurred_at": datetime.now(timezone.utc).isoformat(),
+            "action": action,
+            "provider": provider_name,
+            "actor": actor,
+            "previous_state": circuit.get("previous_state"),
+            "state": circuit.get("state"),
+            "health": health_summary,
+            "details": copy.deepcopy(details or {}),
+        }
+        self.provider_operations.append(operation)
+        self.provider_operations = self.provider_operations[-200:]
+        return copy.deepcopy(operation)
+
     def recover_provider_circuit(
         self,
         provider_name: str,
@@ -14721,12 +14774,21 @@ class MediaForgeService:
                     f"{clean_name}"
                 )
             circuit = self.router.circuit_breaker.manual_recover(clean_name)
+            operation = self._record_provider_operation(
+                action="circuit.recovered.manual",
+                provider_name=clean_name,
+                actor=actor,
+                circuit=circuit,
+                health=health,
+                details={"reason": "operator health probe passed"},
+            )
             self._persist()
             return {
                 "provider": clean_name,
                 "actor": actor,
                 "health": health,
                 "circuit": circuit,
+                "operation": operation,
                 "circuit_status": self.provider_circuit_status(),
                 "message": (
                     f"{clean_name} health check passed; routing is available again."
@@ -14742,6 +14804,16 @@ class MediaForgeService:
         actor: str,
     ) -> None:
         if result.get("opened"):
+            self._record_provider_operation(
+                action="circuit.opened",
+                provider_name=provider_name,
+                actor=actor,
+                circuit=result,
+                details={
+                    "cooldown_seconds": result.get("cooldown_seconds"),
+                    "failure_count": result.get("consecutive_failures"),
+                },
+            )
             self._record_event(
                 project,
                 action="provider.circuit_opened",
@@ -14753,6 +14825,13 @@ class MediaForgeService:
                 details=result,
             )
         elif result.get("recovered"):
+            self._record_provider_operation(
+                action="circuit.recovered",
+                provider_name=provider_name,
+                actor=actor,
+                circuit=result,
+                details={"reason": "successful provider operation"},
+            )
             self._record_event(
                 project,
                 action="provider.circuit_recovered",
@@ -16608,6 +16687,7 @@ class MediaForgeService:
                 "jobs": self.jobs.as_list(),
                 "workers": copy.deepcopy(self.workers),
                 "provider_circuit_breaker": self.router.circuit_breaker.export_state(),
+                "provider_operations": copy.deepcopy(self.provider_operations),
             }
             serialized = json.dumps(payload, ensure_ascii=True, indent=2)
             if self.state_backend == "postgres":
@@ -16676,6 +16756,13 @@ class MediaForgeService:
             self.router.circuit_breaker.restore(
                 payload.get("provider_circuit_breaker")
             )
+            stored_provider_operations = payload.get("provider_operations", [])
+            if isinstance(stored_provider_operations, list):
+                self.provider_operations = [
+                    copy.deepcopy(item)
+                    for item in stored_provider_operations[-200:]
+                    if isinstance(item, dict)
+                ]
             self.jobs.restore(payload.get("jobs", []))
             stored_workers = payload.get("workers", {})
             if isinstance(stored_workers, dict):

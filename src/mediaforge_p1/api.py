@@ -1337,6 +1337,12 @@ def create_app(output_root: Path | None = None) -> FastAPI:
     def provider_circuits() -> dict:
         return service.provider_circuit_status()
 
+    @app.get("/providers/operations")
+    def provider_operations(
+        limit: int = Query(default=50, ge=1, le=200),
+    ) -> dict[str, Any]:
+        return service.provider_operations_view(limit=limit)
+
     @app.post("/providers/{provider_name}/circuit/recover")
     def recover_provider_circuit(
         provider_name: str,

@@ -153,6 +153,7 @@ class ProviderCircuitBreaker:
             return self.snapshot(clean_name, now=failed_at)
         with self._lock:
             state = self._state_for(clean_name)
+            previous_state = state.state
             was_half_open = state.state == "HALF_OPEN"
             state.consecutive_failures += 1
             state.last_error = error[:1000]
@@ -181,6 +182,7 @@ class ProviderCircuitBreaker:
                 if opened
                 else None
             )
+            result["previous_state"] = previous_state
             return result
 
     def record_success(
@@ -196,6 +198,7 @@ class ProviderCircuitBreaker:
             return self.snapshot(clean_name, now=succeeded_at)
         with self._lock:
             state = self._state_for(clean_name)
+            previous_state = state.state
             recovered = state.state in {"OPEN", "HALF_OPEN"}
             state.consecutive_failures = 0
             state.state = "CLOSED"
@@ -205,6 +208,7 @@ class ProviderCircuitBreaker:
             state.last_success_at = succeeded_at
             result = self._snapshot_locked(clean_name, state, now=succeeded_at)
             result["recovered"] = recovered
+            result["previous_state"] = previous_state
             return result
 
     def manual_recover(

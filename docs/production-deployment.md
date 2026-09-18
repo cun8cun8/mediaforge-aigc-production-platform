@@ -372,6 +372,8 @@ POST /providers/{provider_name}/circuit/recover 提前恢复路由。该接口�
 服务商的主动健康探测，只有熔断仍为 OPEN 且探测通过才会关闭熔断并持久化状态；
 未配置主动探测、探测失败、已关闭或已进入半开状态都会拒绝。它不是绕过健康检查的
 强制启用接口。
+运维记录可通过 GET /providers/operations 查看；记录包含服务商、操作者、时间、前后
+状态和脱敏后的健康探测摘要，并随控制面快照持久化。
 
 用量计费台账写入 `MEDIAFORGE_BILLING_DB`，事件以 `(tenant_id, event_id)` 幂等；旧表会
 在事务中迁移并保留记录。Provider 成功

@@ -100,6 +100,8 @@ POST /providers/{provider_name}/circuit/recover. MediaForge runs that
 Provider's active health probe first and closes the circuit only when the probe
 passes. It rejects a closed or half-open circuit, a configuration-only probe,
 and any failed probe; the endpoint is deliberately not a force-enable switch.
+Use GET /providers/operations to review the bounded, persisted Provider
+operation history, including automatic isolation and successful recovery.
 
 ### Replicate Native Webhook Worker
 

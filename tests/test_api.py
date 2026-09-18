@@ -487,6 +487,11 @@ def test_open_provider_circuit_routes_later_shots_to_a_fallback(
         for event in client.get(f"/projects/{first_project}/audit").json()["events"]
     }
     assert "provider.circuit_opened" in audit_actions
+    operation_actions = {
+        item["action"]
+        for item in client.get("/providers/operations").json()["operations"]
+    }
+    assert "circuit.opened" in operation_actions
 
 
 def test_provider_circuit_recovery_requires_an_open_circuit_and_active_health(
@@ -520,7 +525,19 @@ def test_provider_circuit_recovery_requires_an_open_circuit_and_active_health(
     assert recovered.json()["health"]["probe"] == "active"
     assert recovered.json()["circuit"]["previous_state"] == "OPEN"
     assert recovered.json()["circuit"]["state"] == "CLOSED"
+    assert recovered.json()["operation"]["action"] == "circuit.recovered.manual"
     assert client.get("/providers/circuits").json()["providers"][0]["state"] == "CLOSED"
+    operations = client.get("/providers/operations")
+    assert operations.status_code == 200
+    assert operations.json()["operations"][0]["actor"] == "operations-test"
+    assert operations.json()["operations"][0]["action"] == "circuit.recovered.manual"
+
+    restored = TestClient(create_app(output_root=tmp_path))
+    restored_operations = restored.get("/providers/operations")
+    assert restored_operations.status_code == 200
+    assert restored_operations.json()["operations"][0]["operation_id"] == (
+        operations.json()["operations"][0]["operation_id"]
+    )
 
     class UnhealthyProvider(MockProvider):
         name = "unhealthy-provider"
@@ -3775,6 +3792,8 @@ def test_studio_static_assets_are_served(tmp_path: Path, monkeypatch) -> None:
     assert "/providers/warmup" in script.text
     assert "/circuit/recover" in script.text
     assert "providerRecoveryButton" in script.text
+    assert "providerOperationList" in script.text
+    assert "/providers/operations" in script.text
     assert "/lipsync" in script.text
     assert "/source-chapters" in script.text
     assert "/source-documents/import" in script.text
