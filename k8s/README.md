@@ -1,5 +1,10 @@
 # MediaForge Kubernetes 清单
 
+需要按环境复用同一部署拓扑时，可以使用仓库的 Helm Chart
+helm/mediaforge。Chart 只引用由集群密钥系统创建的现有 Secret，不接受把数据库、
+Provider、OIDC 或 C2PA 密钥放入 Values；安装前先执行 helm lint、helm template 和
+目标集群的 server-side dry run。
+
 `base` 部署两个主动/备用 API 副本、一个只指向就绪副本的 ClusterIP 服务、一个
 RWX 数据卷和 PDB。`overlays/gpu-worker` 在同一控制面加入本地 Provider 回调式 GPU
 Worker。清单使用占位镜像 `ghcr.io/replace-me/mediaforge:replace-me` 和存储类

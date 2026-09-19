@@ -163,6 +163,9 @@ prediction ID，API 只接受经过 Replicate `whsec_` 密钥验证的终态回�
 | 高可用 | 控制面故障切换 | leased API、Nginx、共享 RWX 存储、监控 | `docker-compose.ha.yml`、[发布清单](docs/release-checklist.md) |
 | Kubernetes | 多节点和 GPU 资源编排 | `k8s/base` 与 GPU/网络策略 overlay | [Kubernetes 指南](k8s/README.md) |
 
+Helm 集群发布：使用现有 Secret、RWX 存储、可选 GPU Worker、HPA/Ingress 的可参数化
+[Helm Chart](helm/mediaforge/README.md)。
+
 ### 本地预发布基线
 
 仓库提供单控制面的预发布 Compose，用于在接入真实模型前验证 PostgreSQL、Redis、MinIO、鉴权、阶段锁定、对象归档和 Worker 租约。它不会打包 GPU 模型或代替生产高可用部署。
@@ -208,6 +211,7 @@ src/mediaforge_p1/       FastAPI 控制面、编排、Provider、Worker、治理
 tests/                   API、企业适配器、工作流和浏览器验收测试
 docs/                    架构、Provider、部署、配置、运行时参考和发布材料
 k8s/                     基础清单、GPU Worker、网络隔离 overlay
+helm/mediaforge/         可参数化的生产 Helm Chart（引用外部 Secret）
 ops/                     备份恢复、Nginx、负载基线、Prometheus/Grafana/Alertmanager
 .github/workflows/       CI 与受保护的人工 Kubernetes 部署工作流
 ```

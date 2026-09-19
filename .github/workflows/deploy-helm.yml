@@ -1,0 +1,97 @@
+name: MediaForge Manual Helm Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: GitHub Environment containing protected cluster and Helm values secrets
+        required: true
+        type: environment
+      namespace:
+        description: Kubernetes namespace
+        required: true
+        default: mediaforge
+        type: string
+      release:
+        description: Helm release name
+        required: true
+        default: mediaforge
+        type: string
+      image:
+        description: Immutable container image digest
+        required: true
+        type: string
+      mode:
+        description: Server-side dry run or explicit Helm upgrade
+        required: true
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - apply
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      KUBE_CONFIG_DATA: ${{ secrets.KUBE_CONFIG_DATA }}
+      HELM_VALUES_B64: ${{ secrets.MEDIAFORGE_HELM_VALUES_B64 }}
+      NAMESPACE: ${{ inputs.namespace }}
+      RELEASE: ${{ inputs.release }}
+      IMAGE: ${{ inputs.image }}
+      MODE: ${{ inputs.mode }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-kubectl@v4
+      - uses: azure/setup-helm@v4
+      - name: Configure protected cluster access
+        run: |
+          if [ -z "$KUBE_CONFIG_DATA" ]; then
+            echo "KUBE_CONFIG_DATA is required in the selected GitHub Environment." >&2
+            exit 2
+          fi
+          printf '%s' "$KUBE_CONFIG_DATA" | base64 --decode > "$RUNNER_TEMP/kubeconfig"
+          chmod 600 "$RUNNER_TEMP/kubeconfig"
+          echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
+      - name: Materialize protected non-secret Helm values
+        run: |
+          if [ -z "$HELM_VALUES_B64" ]; then
+            echo "MEDIAFORGE_HELM_VALUES_B64 is required in the selected GitHub Environment." >&2
+            exit 2
+          fi
+          printf '%s' "$HELM_VALUES_B64" | base64 --decode > "$RUNNER_TEMP/mediaforge-values.yaml"
+          test -s "$RUNNER_TEMP/mediaforge-values.yaml"
+      - name: Validate immutable release inputs
+        run: |
+          case "$NAMESPACE" in
+            ''|*[!a-z0-9-]*) echo "Namespace is invalid." >&2; exit 2 ;;
+          esac
+          case "$RELEASE" in
+            ''|*[!a-z0-9-]*) echo "Release name is invalid." >&2; exit 2 ;;
+          esac
+          if ! printf '%s' "$IMAGE" | grep -Eq '^.+@sha256:[0-9a-f]{64}$'; then
+            echo "Image must use an immutable sha256 digest." >&2
+            exit 2
+          fi
+      - name: Render and validate release manifest
+        run: |
+          helm lint helm/mediaforge --values "$RUNNER_TEMP/mediaforge-values.yaml"
+          helm template "$RELEASE" helm/mediaforge \
+            --namespace "$NAMESPACE" \
+            --values "$RUNNER_TEMP/mediaforge-values.yaml" \
+            --set-string image.reference="$IMAGE" \
+            > "$RUNNER_TEMP/mediaforge-rendered.yaml"
+          kubectl apply --server-side --dry-run=server -f "$RUNNER_TEMP/mediaforge-rendered.yaml"
+      - name: Apply approved Helm release
+        if: ${{ inputs.mode == 'apply' }}
+        run: |
+          helm upgrade --install "$RELEASE" helm/mediaforge \
+            --namespace "$NAMESPACE" \
+            --create-namespace \
+            --values "$RUNNER_TEMP/mediaforge-values.yaml" \
+            --set-string image.reference="$IMAGE" \
+            --atomic --wait --timeout 10m

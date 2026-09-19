@@ -1,0 +1,12 @@
+apiVersion: v2
+name: mediaforge
+description: Production-oriented MediaForge AIGC production platform deployment
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - mediaforge
+  - aigc
+  - media-production
+maintainers:
+  - name: MediaForge maintainers

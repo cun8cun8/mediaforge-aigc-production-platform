@@ -1,0 +1,15 @@
+{{- if .Values.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "mediaforge.fullname" . }}
+  labels:
+    {{- include "mediaforge.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  minAvailable: {{ .Values.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "mediaforge.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+{{- end }}

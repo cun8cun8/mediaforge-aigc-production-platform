@@ -1,0 +1,156 @@
+{{- include "mediaforge.validate" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mediaforge.fullname" . }}
+  labels:
+    {{- include "mediaforge.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ .Values.api.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mediaforge.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        {{- include "mediaforge.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: api
+        {{- with .Values.api.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.api.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "mediaforge.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 45
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: api
+          image: {{ include "mediaforge.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8020
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "mediaforge.runtimeConfigName" . }}
+            {{- with .Values.runtime.providerConfigMap.name }}
+            - configMapRef:
+                name: {{ . }}
+                optional: {{ $.Values.runtime.providerConfigMap.optional }}
+            {{- end }}
+          env:
+            - name: MEDIAFORGE_CONTROL_PLANE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: MEDIAFORGE_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.runtime.existingSecret }}
+                  key: database-url
+            - name: MEDIAFORGE_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.runtime.existingSecret }}
+                  key: redis-url
+            - name: MEDIAFORGE_STORAGE_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.runtime.existingSecret }}
+                  key: storage-endpoint
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.runtime.existingSecret }}
+                  key: storage-access-key-id
+                  optional: true
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.runtime.existingSecret }}
+                  key: storage-secret-access-key
+                  optional: true
+            - name: MEDIAFORGE_API_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.runtime.existingSecret }}
+                  key: api-keys
+            - name: MEDIAFORGE_CALLBACK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.runtime.existingSecret }}
+                  key: callback-secret
+            - name: MEDIAFORGE_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.runtime.existingSecret }}
+                  key: oidc-client-secret
+                  optional: true
+            {{- with .Values.api.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          volumeMounts:
+            - name: mediaforge-data
+              mountPath: /var/lib/mediaforge
+            - name: runtime-secrets
+              mountPath: {{ .Values.runtime.secretMountPath }}
+              readOnly: true
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: http
+            failureThreshold: {{ .Values.api.probes.startup.failureThreshold }}
+            periodSeconds: {{ .Values.api.probes.startup.periodSeconds }}
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: {{ .Values.api.probes.liveness.periodSeconds }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: {{ .Values.api.probes.readiness.periodSeconds }}
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.api.containerSecurityContext | nindent 12 }}
+      volumes:
+        - name: mediaforge-data
+          persistentVolumeClaim:
+            claimName: {{ include "mediaforge.persistenceClaim" . }}
+        - name: runtime-secrets
+          secret:
+            secretName: {{ .Values.runtime.existingSecret }}
+            defaultMode: 256

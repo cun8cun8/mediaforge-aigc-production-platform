@@ -1,0 +1,104 @@
+{{- if .Values.worker.enabled }}
+{{- include "mediaforge.validate" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mediaforge.fullname" . }}-worker
+  labels:
+    {{- include "mediaforge.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mediaforge.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        {{- include "mediaforge.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+        {{- with .Values.worker.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.worker.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "mediaforge.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: worker
+          image: {{ include "mediaforge.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -ec
+          args:
+            - >-
+              exec mediaforge-worker --base-url "$MEDIAFORGE_API_BASE_URL"
+              --worker-id "$POD_NAME" --concurrency {{ .Values.worker.concurrency }}
+              --execution-mode {{ .Values.worker.executionMode | quote }}
+              --artifact-root "$MEDIAFORGE_WORKER_ARTIFACT_ROOT"
+              --poll-interval {{ .Values.worker.pollIntervalSeconds }}
+              {{- range .Values.worker.capabilities }} --capability {{ . | quote }}{{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "mediaforge.runtimeConfigName" . }}
+            {{- with .Values.runtime.providerConfigMap.name }}
+            - configMapRef:
+                name: {{ . }}
+                optional: {{ $.Values.runtime.providerConfigMap.optional }}
+            {{- end }}
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: MEDIAFORGE_API_BASE_URL
+              value: http://{{ include "mediaforge.fullname" . }}:{{ .Values.service.port }}
+            - name: MEDIAFORGE_WORKER_ARTIFACT_ROOT
+              value: /var/lib/mediaforge/artifacts
+            - name: MEDIAFORGE_WORKER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.runtime.existingSecret }}
+                  key: worker-token
+            - name: MEDIAFORGE_CALLBACK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.runtime.existingSecret }}
+                  key: callback-secret
+            {{- with .Values.worker.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          volumeMounts:
+            - name: mediaforge-data
+              mountPath: /var/lib/mediaforge
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.worker.containerSecurityContext | nindent 12 }}
+      volumes:
+        - name: mediaforge-data
+          persistentVolumeClaim:
+            claimName: {{ include "mediaforge.persistenceClaim" . }}
+{{- end }}

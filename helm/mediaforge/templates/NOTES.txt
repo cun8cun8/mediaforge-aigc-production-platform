@@ -1,0 +1,17 @@
+MediaForge has been rendered with production-oriented defaults.
+
+The chart never creates runtime credentials. Before installing, create or reference
+the Secret {{ .Values.runtime.existingSecret | quote }} with at least:
+  database-url, redis-url, storage-endpoint, api-keys, worker-token,
+  callback-secret, metrics-token.
+
+The API service is available at:
+  http://{{ include "mediaforge.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}
+
+Before admitting production traffic, verify through the public gateway:
+  GET /enterprise/probe
+  GET /ops/readiness
+  GET /ops/alerts
+
+Run mediaforge-production-acceptance --require-production only after a real
+Provider probe and trusted C2PA signer/verifier acceptance have completed.

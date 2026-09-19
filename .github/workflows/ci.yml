@@ -36,6 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-kubectl@v4
+      - uses: azure/setup-helm@v4
       - name: Validate Compose topologies
         env:
           MEDIAFORGE_ENV_FILE: .env.example
@@ -55,6 +56,30 @@ jobs:
           kubectl kustomize k8s/base > /dev/null
           kubectl kustomize k8s/overlays/gpu-worker > /dev/null
           kubectl kustomize k8s/overlays/locked-down > /dev/null
+      - name: Lint and render Helm chart
+        run: |
+          helm lint helm/mediaforge
+          helm template mediaforge helm/mediaforge \
+            --namespace mediaforge \
+            --set image.repository=ghcr.io/example/mediaforge \
+            --set image.tag=ci \
+            > /dev/null
+          helm template mediaforge helm/mediaforge \
+            --namespace mediaforge \
+            --set image.repository=ghcr.io/example/mediaforge \
+            --set image.tag=ci \
+            --set worker.enabled=true \
+            > /dev/null
+          if helm template invalid helm/mediaforge \
+            --set persistence.accessModes[0]=ReadWriteOnce > /dev/null; then
+            echo "Helm chart accepted an unsafe multi-replica non-RWX volume." >&2
+            exit 1
+          fi
+          if helm template insecure helm/mediaforge \
+            --set-string runtime.config.MEDIAFORGE_PROVIDER_API_KEY=should-not-render > /dev/null; then
+            echo "Helm chart accepted a secret-looking ConfigMap value." >&2
+            exit 1
+          fi
       - name: Build production image
         run: docker build --tag mediaforge-ci:${{ github.sha }} .
 

@@ -164,6 +164,23 @@ paths and OIDC/session artifacts also need shared durable storage. Run
 `mediaforge-production-acceptance --require-production` through the gateway
 before admitting production traffic.
 
+## Helm
+
+仓库同时提供 helm/mediaforge Chart，适用于把同一套 API、可选 GPU Worker、RWX
+工件卷、PDB、HPA 与 Ingress 参数化到多个环境。Chart 不会创建数据库、Redis、对象
+存储、OIDC、Provider、证书或 Secret；应让 External Secrets、Sealed Secrets 或组织
+密钥系统创建 runtime.existingSecret，并把不含凭据的运行参数放入 Values 文件。两个
+API 副本要求 ReadWriteMany 工件卷，配置不满足时模板会失败：
+
+~~~sh
+helm lint helm/mediaforge
+helm template mediaforge helm/mediaforge --namespace mediaforge \
+  --values production-values.yaml > mediaforge-rendered.yaml
+kubectl apply --server-side --dry-run=server -f mediaforge-rendered.yaml
+~~~
+
+完整的密钥键名、GPU Worker 和 Ingress 配置见 helm/mediaforge/README.md。
+
 ## Operations Alerts
 
 `GET /ops/alerts` derives a deterministic `HEALTHY`, `WARNING`, or `CRITICAL`

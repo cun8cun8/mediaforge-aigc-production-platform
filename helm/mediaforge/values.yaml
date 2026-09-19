@@ -1,0 +1,139 @@
+# This chart deliberately references an existing Kubernetes Secret. Keep real
+# credentials in External Secrets, Sealed Secrets, or the cluster secret manager.
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/replace-me/mediaforge
+  tag: ""
+  digest: ""
+  reference: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+runtime:
+  existingSecret: mediaforge-runtime
+  secretMountPath: /var/run/secrets/mediaforge
+  providerConfigMap:
+    name: ""
+    optional: true
+  config:
+    MEDIAFORGE_ARTIFACT_ROOT: /var/lib/mediaforge/artifacts
+    MEDIAFORGE_STATE_BACKEND: postgres
+    MEDIAFORGE_STATE_TABLE: mediaforge_state
+    MEDIAFORGE_QUEUE_BACKEND: redis
+    MEDIAFORGE_REDIS_QUEUE: mediaforge:jobs
+    MEDIAFORGE_STORAGE_MODE: s3
+    MEDIAFORGE_STORAGE_BUCKET: mediaforge-artifacts
+    MEDIAFORGE_CONTROL_PLANE_MODE: leased
+    MEDIAFORGE_CONTROL_PLANE_LEASE_SECONDS: "30"
+    MEDIAFORGE_RATE_LIMIT_BACKEND: sqlite
+    MEDIAFORGE_BILLING_DB: /var/lib/mediaforge/billing.sqlite3
+    MEDIAFORGE_AUTH_MODE: required
+    MEDIAFORGE_OIDC_COOKIE_SECURE: "true"
+    MEDIAFORGE_METRICS_AUTH_MODE: token
+    MEDIAFORGE_METRICS_TOKEN_FILE: /var/run/secrets/mediaforge/metrics-token
+    MEDIAFORGE_REQUIRE_STAGE_LOCKS: "true"
+    MEDIAFORGE_REQUIRE_RELEASE_CONTENT_CREDENTIALS: "true"
+    MEDIAFORGE_AUDIT_ANCHOR_MODE: disabled
+
+persistence:
+  enabled: true
+  existingClaim: ""
+  accessModes:
+    - ReadWriteMany
+  storageClass: ""
+  size: 100Gi
+
+api:
+  replicaCount: 2
+  podAnnotations: {}
+  podLabels: {}
+  podSecurityContext: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  extraEnv: []
+  probes:
+    startup:
+      failureThreshold: 30
+      periodSeconds: 5
+    liveness:
+      periodSeconds: 15
+    readiness:
+      periodSeconds: 5
+
+service:
+  type: ClusterIP
+  port: 8020
+  annotations: {}
+
+pdb:
+  enabled: true
+  minAvailable: 1
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts: []
+  tls: []
+
+worker:
+  enabled: false
+  replicaCount: 1
+  executionMode: local-provider-callback
+  concurrency: 1
+  pollIntervalSeconds: 5
+  capabilities:
+    - image_generation
+    - image_to_video
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  resources:
+    requests:
+      cpu: "1"
+      memory: 4Gi
+      nvidia.com/gpu: "1"
+    limits:
+      cpu: "4"
+      memory: 12Gi
+      nvidia.com/gpu: "1"
+  extraEnv: []
