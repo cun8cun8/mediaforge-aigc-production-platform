@@ -533,6 +533,19 @@ class ContentCredentialRequest(BaseModel):
     actor: str = Field(default="studio-governance", min_length=1, max_length=120)
 
 
+class ContentCredentialsAttestationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_reference: str = Field(min_length=1, max_length=1000)
+    evidence_sha256: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-fA-F]{64}$",
+    )
+    note: str = Field(default="", max_length=2000)
+    actor: str = Field(default="studio-governance", min_length=1, max_length=120)
+
+
 class PromptVersionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -2715,6 +2728,23 @@ def create_app(output_root: Path | None = None) -> FastAPI:
     @app.get("/content-credentials/status")
     def get_content_credentials_status() -> dict[str, Any]:
         return service.content_credentials_status()
+
+    @app.post("/content-credentials/attest")
+    def attest_content_credentials(
+        payload: ContentCredentialsAttestationRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        try:
+            principal = request.state.principal
+            actor = principal.subject if principal.authenticated else payload.actor
+            return service.attest_content_credentials(
+                actor=actor,
+                evidence_reference=payload.evidence_reference,
+                evidence_sha256=payload.evidence_sha256,
+                note=payload.note,
+            )
+        except WorkflowError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post("/projects/{project_id}/content-credentials")
     def create_project_content_credential(

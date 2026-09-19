@@ -14,6 +14,7 @@ from mediaforge_p1.c2pa_signer import (
     _verify,
 )
 from mediaforge_p1.content_credentials import ContentCredentialSettings, ContentCredentials
+from mediaforge_p1.service import MediaForgeService
 
 
 def test_production_status_requires_a_trusted_signer_attestation() -> None:
@@ -37,6 +38,51 @@ def test_production_status_requires_a_trusted_signer_attestation() -> None:
         )
     ).status_view()
     assert verified["production_ready"] is True
+
+
+def test_service_persists_admin_c2pa_attestation_and_invalidates_on_config_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "MEDIAFORGE_C2PA_SIGNER_COMMAND",
+        "signer {input} {c2pa_manifest} {output}",
+    )
+    monkeypatch.setenv(
+        "MEDIAFORGE_C2PA_VERIFIER_COMMAND",
+        "verifier {input} {c2pa_manifest} {output}",
+    )
+    monkeypatch.setenv(
+        "MEDIAFORGE_C2PA_VERIFIER_TRUST_ANCHORS",
+        "https://trust.example.test/c2pa.pem",
+    )
+    service = MediaForgeService(tmp_path)
+    assert service.content_credentials_status()["production_ready"] is False
+
+    attested = service.attest_content_credentials(
+        actor="release-admin",
+        evidence_reference="https://evidence.example.test/c2pa/run-17",
+        evidence_sha256="a" * 64,
+        note="独立验证器已通过生产证书链检查。",
+    )
+    assert attested["production_ready"] is True
+    assert attested["operator_attestation"]["status"] == "VALID"
+    assert attested["operator_attestation"]["attested_by"] == "release-admin"
+
+    restored = MediaForgeService(tmp_path)
+    restored_status = restored.content_credentials_status()
+    assert restored_status["production_ready"] is True
+    assert restored_status["operator_attestation"]["status"] == "VALID"
+
+    restored.content_credentials.settings = ContentCredentialSettings(
+        signer_command="changed-signer {input} {c2pa_manifest} {output}",
+        verifier_command="verifier {input} {c2pa_manifest} {output}",
+        timeout_seconds=120,
+        trusted_validation_configured=True,
+    )
+    stale = restored.content_credentials_status()
+    assert stale["production_ready"] is False
+    assert stale["operator_attestation"]["status"] == "STALE"
 
 
 def test_content_credential_uses_dedicated_c2patool_manifest(

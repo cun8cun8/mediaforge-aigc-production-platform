@@ -4177,6 +4177,22 @@ def test_required_auth_enforces_roles_and_tenant_isolation(
         headers=admin,
         json={},
     ).status_code == 422
+    assert client.post(
+        "/content-credentials/attest",
+        headers=viewer_a,
+        json={
+            "evidence_reference": "https://evidence.example.test/c2pa",
+            "evidence_sha256": "a" * 64,
+        },
+    ).status_code == 403
+    assert client.post(
+        "/content-credentials/attest",
+        headers=admin,
+        json={
+            "evidence_reference": "https://evidence.example.test/c2pa",
+            "evidence_sha256": "a" * 64,
+        },
+    ).status_code == 422
     service = client.app.state.mediaforge
     provider = service.provider
     service.router = ProviderRouter(

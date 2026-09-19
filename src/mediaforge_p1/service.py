@@ -264,6 +264,7 @@ class MediaForgeService:
         self.workers: dict[str, dict[str, Any]] = {}
         self.provider_operations: list[dict[str, Any]] = []
         self.operations_alert_acknowledgements: dict[str, dict[str, Any]] = {}
+        self.c2pa_attestation: dict[str, Any] | None = None
         self.retry_policy = RetryPolicy.from_env()
         self.job_lease_policy = JobLeasePolicy.from_env()
         self.jobs = JobStore(max_attempts=self.retry_policy.max_attempts)
@@ -574,6 +575,7 @@ class MediaForgeService:
         self.workers = {}
         self.provider_operations = []
         self.operations_alert_acknowledgements = {}
+        self.c2pa_attestation = None
         self.jobs = JobStore(max_attempts=self.retry_policy.max_attempts)
         self.license_registry = LicenseRegistry.from_env()
         self.license_registry_metadata = {
@@ -11623,7 +11625,82 @@ class MediaForgeService:
         }
 
     def content_credentials_status(self) -> dict[str, Any]:
-        return self.content_credentials.status_view()
+        status = self.content_credentials.status_view()
+        fingerprint = self.content_credentials.configuration_fingerprint()
+        attestation = self.c2pa_attestation
+        attestation_valid = bool(
+            isinstance(attestation, dict)
+            and attestation.get("configuration_fingerprint") == fingerprint
+        )
+        status["operator_attestation"] = (
+            {
+                "status": "VALID" if attestation_valid else "STALE",
+                "attested_at": attestation.get("attested_at"),
+                "attested_by": attestation.get("actor"),
+                "evidence_reference": attestation.get("evidence_reference"),
+                "evidence_sha256": attestation.get("evidence_sha256"),
+                "note": attestation.get("note"),
+            }
+            if isinstance(attestation, dict)
+            else {"status": "NOT_RECORDED"}
+        )
+        status["production_signer_attested"] = bool(
+            status.get("production_signer_attested") or attestation_valid
+        )
+        status["production_ready"] = bool(
+            status.get("configured")
+            and status.get("verifier_configured")
+            and status.get("trusted_validation_configured")
+            and status.get("signer_identity_mode") != "builtin-test"
+            and status["production_signer_attested"]
+        )
+        if attestation_valid:
+            status["message"] = (
+                "Trusted C2PA validation was attested by the recorded operator."
+            )
+        elif isinstance(attestation, dict):
+            status["message"] = (
+                "The stored C2PA attestation is stale because the signer configuration changed."
+            )
+        return status
+
+    def attest_content_credentials(
+        self,
+        *,
+        actor: str,
+        evidence_reference: str,
+        evidence_sha256: str,
+        note: str = "",
+    ) -> dict[str, Any]:
+        clean_actor = actor.strip()
+        clean_reference = evidence_reference.strip()
+        clean_sha256 = evidence_sha256.strip().lower()
+        if not clean_actor:
+            raise WorkflowError("C2PA attestation actor is required")
+        if not clean_reference:
+            raise WorkflowError("C2PA attestation evidence reference is required")
+        if not re.fullmatch(r"[0-9a-f]{64}", clean_sha256):
+            raise WorkflowError("C2PA attestation evidence SHA-256 is invalid")
+        current = self.content_credentials.status_view()
+        if not current.get("configured") or not current.get("verifier_configured"):
+            raise WorkflowError("C2PA signer and verifier must be configured before attestation")
+        if current.get("signer_identity_mode") == "builtin-test":
+            raise WorkflowError("test C2PA signer mode cannot be attested for production")
+        if not current.get("trusted_validation_configured"):
+            raise WorkflowError("C2PA trust anchors or an allowed signing list are required")
+        with self.control_plane_mutation_guard():
+            self.c2pa_attestation = {
+                "schema_version": "mediaforge-c2pa-attestation-v1",
+                "attestation_id": f"c2pa_attestation_{uuid4().hex}",
+                "attested_at": datetime.now(timezone.utc).isoformat(),
+                "actor": clean_actor,
+                "evidence_reference": clean_reference[:1000],
+                "evidence_sha256": clean_sha256,
+                "note": note.strip()[:2000],
+                "configuration_fingerprint": self.content_credentials.configuration_fingerprint(),
+            }
+            self._persist()
+            return self.content_credentials_status()
 
     def _credential_asset(self, project_id: str, asset_id: str) -> dict[str, Any]:
         inventory = self.asset_inventory(project_id)
@@ -16784,6 +16861,7 @@ class MediaForgeService:
                 "operations_alert_acknowledgements": copy.deepcopy(
                     self.operations_alert_acknowledgements
                 ),
+                "c2pa_attestation": copy.deepcopy(self.c2pa_attestation),
             }
             serialized = json.dumps(payload, ensure_ascii=True, indent=2)
             if self.state_backend == "postgres":
@@ -16869,6 +16947,9 @@ class MediaForgeService:
                     for code, record in stored_alert_acknowledgements.items()
                     if isinstance(record, dict)
                 }
+            stored_c2pa_attestation = payload.get("c2pa_attestation")
+            if isinstance(stored_c2pa_attestation, dict):
+                self.c2pa_attestation = copy.deepcopy(stored_c2pa_attestation)
             self.jobs.restore(payload.get("jobs", []))
             stored_workers = payload.get("workers", {})
             if isinstance(stored_workers, dict):

@@ -188,6 +188,12 @@ enterprise dependencies as critical.
 `GET /ops/alerts` 会返回 `acknowledged`、`acknowledged_by`、`acknowledged_at`、
 `acknowledgement_note` 和当前确认数量。启用 API Key 或 OIDC 后，操作者强制取自管理员
 身份，不能使用请求体伪造其他人。
+
+配置真实签名器、验证器和可信信任材料后，管理员可以在完成一次外部 C2PA
+验证后调用 POST /content-credentials/attest，提交证据引用和证据 SHA-256。
+平台只持久化证据引用、摘要、管理员身份和非敏感签名配置指纹，不会把私钥或
+签名令牌写入状态。签名器或验证器配置变化后，旧 attestation 自动失效；该接口
+只记录管理员对外部验证结果的确认，不会代替真实签名和独立验证。
 ## Monitoring And Alert Routing
 
 `docker-compose.observability.yml` is a production-facing Compose overlay that

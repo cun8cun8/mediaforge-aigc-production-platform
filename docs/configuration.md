@@ -114,6 +114,15 @@ mute: if the alert's observed value, threshold, source or code changes, the
 fingerprint no longer matches and the alert becomes actionable again. Review
 the current state with GET /ops/alerts; the response includes acknowledged,
 acknowledged_by, acknowledged_at and acknowledgement_note.
+
+C2PA production readiness can be attested by an administrator after an external
+trusted validation run with POST /content-credentials/attest. The request must
+include an evidence reference and its SHA-256; the record stores only the
+reference, digest, operator and a hash of the non-secret signer configuration.
+The attestation is durable and automatically becomes stale when signer or
+verifier configuration changes. This endpoint records an operator decision; it
+does not create a signature or replace independent C2PA verification.
+
 ### Replicate Native Webhook Worker
 
 Use this only when the API is reachable on a public HTTPS URL. The Worker

@@ -436,6 +436,15 @@ class AuthManager:
                 "operations alert acknowledgement requires an admin role",
                 status_code=403,
             )
+        if (
+            path == "/content-credentials/attest"
+            and method.upper() == "POST"
+            and principal.role != "admin"
+        ):
+            raise AuthenticationError(
+                "C2PA production attestation requires an admin role",
+                status_code=403,
+            )
         if path == "/providers/warmup" and method.upper() == "POST" and principal.role != "admin":
             raise AuthenticationError("provider warmup requires an admin role", status_code=403)
         if path == "/planning/probe" and method.upper() == "POST" and principal.role != "admin":
@@ -454,6 +463,8 @@ class AuthManager:
             and path.endswith("/acknowledge")
             and method.upper() == "POST"
         ):
+            required_role = "admin"
+        elif path == "/content-credentials/attest" and method.upper() == "POST":
             required_role = "admin"
         elif path == "/providers/warmup" and method.upper() == "POST":
             required_role = "admin"

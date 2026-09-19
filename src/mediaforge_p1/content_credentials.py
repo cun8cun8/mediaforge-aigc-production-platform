@@ -7,6 +7,7 @@ reported as signed when an operator-configured C2PA command produces the
 declared output; a local JSON claim is deliberately labelled UNSIGNED.
 """
 
+import hashlib
 import json
 import mimetypes
 import os
@@ -76,6 +77,22 @@ class ContentCredentialSettings:
 class ContentCredentials:
     def __init__(self, settings: ContentCredentialSettings | None = None) -> None:
         self.settings = settings or ContentCredentialSettings.from_env()
+
+    def configuration_fingerprint(self) -> str:
+        payload = {
+            "signer_command": self.settings.signer_command,
+            "verifier_command": self.settings.verifier_command,
+            "test_signer_mode": self.settings.test_signer_mode,
+            "trusted_validation_configured": self.settings.trusted_validation_configured,
+        }
+        return hashlib.sha256(
+            json.dumps(
+                payload,
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
 
     def status_view(self) -> dict[str, Any]:
         signer_configured = self.settings.signer_command is not None
