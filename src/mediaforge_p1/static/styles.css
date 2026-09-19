@@ -249,6 +249,11 @@ input:focus, textarea:focus, select:focus {
 .readiness-row span { color: var(--muted); font-size: 9px; font-weight: 800; text-transform: uppercase; }
 .readiness-row strong { color: var(--mint); font-size: 12px; }
 .readiness-row small { grid-column: 1 / -1; color: var(--muted); font-size: 10px; }
+.readiness-panel { margin-top: 12px; }
+.readiness-panel .panel-heading { margin-bottom: 6px; }
+.c2pa-attestation-form { display: grid; gap: 8px; margin-top: 10px; }
+.c2pa-attestation-form input { min-width: 0; }
+.c2pa-attestation-form .button { justify-self: start; }
 .toggle-row {
   display: flex;
   align-items: center;

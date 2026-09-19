@@ -129,6 +129,26 @@
               <div><span>身份模式</span><strong id="overviewIdentityMode">读取中</strong></div>
               <div><span>用量事件</span><strong id="overviewBillingEvents">0</strong></div>
             </div>
+            <div class="readiness-panel">
+              <div class="panel-heading">
+                <span class="eyebrow">生产准入清单</span>
+                <span id="productionGapCount" class="mini-label">检查中</span>
+              </div>
+              <div id="productionGapList" class="policy-list"></div>
+            </div>
+            <div class="readiness-panel">
+              <div class="panel-heading">
+                <span class="eyebrow">C2PA 可信验证</span>
+                <span id="c2paStatusLabel" class="mini-label">读取中</span>
+              </div>
+              <div id="c2paStatusSummary" class="policy-list"></div>
+              <form id="c2paAttestationForm" class="c2pa-attestation-form" hidden>
+                <input id="c2paEvidenceReference" type="text" maxlength="1000" placeholder="验证证据链接或归档编号" required />
+                <input id="c2paEvidenceSha256" type="text" minlength="64" maxlength="64" pattern="[0-9a-fA-F]{64}" placeholder="验证证据 SHA-256" required />
+                <input id="c2paAttestationNote" type="text" maxlength="2000" placeholder="管理员备注（可选）" />
+                <button class="button button-secondary" type="submit">记录管理员确认</button>
+              </form>
+            </div>
             <div class="overview-actions">
               <a id="overviewMetricsJsonLink" class="button button-quiet" href="/studio/metrics/export?format=json" download>导出 JSON</a>
               <a id="overviewMetricsCsvLink" class="button button-quiet" href="/studio/metrics/export?format=csv" download>导出 CSV</a>

@@ -3650,6 +3650,9 @@ def test_studio_static_assets_are_served(tmp_path: Path, monkeypatch) -> None:
     assert "导入台账" in html.text
     assert "运营告警" in html.text
     assert "acknowledge-ops-alert" in script.text
+    assert "生产准入清单" in html.text
+    assert "C2PA 可信验证" in html.text
+    assert "/content-credentials/attest" in script.text
     assert "服务商中心" in html.text
     assert "运行诊断" in html.text
     assert "故事规划 Agent" in html.text
@@ -4227,6 +4230,61 @@ def test_required_auth_enforces_roles_and_tenant_isolation(
     assert auth_status.status_code == 200
     assert auth_status.json()["mode"] == "required"
     assert auth_status.json()["credential_count"] == 4
+
+
+def test_c2pa_attestation_requires_admin_and_binds_authenticated_actor(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("MEDIAFORGE_AUTH_MODE", "required")
+    monkeypatch.setenv(
+        "MEDIAFORGE_API_KEYS",
+        json.dumps(
+            {
+                "viewer": {
+                    "subject": "viewer-user",
+                    "role": "viewer",
+                    "tenant_id": "tenant_a",
+                },
+                "admin": {
+                    "subject": "release-admin",
+                    "role": "admin",
+                },
+            }
+        ),
+    )
+    monkeypatch.setenv(
+        "MEDIAFORGE_C2PA_SIGNER_COMMAND",
+        "signer {input} {c2pa_manifest} {output}",
+    )
+    monkeypatch.setenv(
+        "MEDIAFORGE_C2PA_VERIFIER_COMMAND",
+        "verifier {input} {c2pa_manifest} {output}",
+    )
+    monkeypatch.setenv(
+        "MEDIAFORGE_C2PA_VERIFIER_TRUST_ANCHORS",
+        "https://trust.example.test/c2pa.pem",
+    )
+    client = TestClient(create_app(output_root=tmp_path))
+    payload = {
+        "evidence_reference": "https://evidence.example.test/c2pa/run-1",
+        "evidence_sha256": "b" * 64,
+        "actor": "spoofed-user",
+    }
+
+    assert client.post(
+        "/content-credentials/attest",
+        headers={"Authorization": "Bearer viewer"},
+        json=payload,
+    ).status_code == 403
+    confirmed = client.post(
+        "/content-credentials/attest",
+        headers={"Authorization": "Bearer admin"},
+        json=payload,
+    )
+    assert confirmed.status_code == 200
+    assert confirmed.json()["operator_attestation"]["attested_by"] == "release-admin"
+    assert confirmed.json()["operator_attestation"]["status"] == "VALID"
 
 
 def test_project_membership_roles_are_enforced_and_tenant_cost_is_exportable(

@@ -32,6 +32,8 @@ const state = {
   operationsAlerts: null,
   enterpriseStatus: null,
   billingSummary: null,
+  contentCredentialsStatus: null,
+  currentPrincipal: null,
   settlementSummary: null,
   billingPage: null,
   billingOffset: 0,
@@ -1262,6 +1264,8 @@ function renderOverview() {
   $("overviewQueueBackend").textContent = enterprise.queue?.backend || "未知";
   $("overviewIdentityMode").textContent = enterprise.identity?.mode || "未知";
   $("overviewBillingEvents").textContent = String(billing.event_count || enterprise.billing?.event_count || 0);
+  renderProductionGaps(readiness);
+  renderC2paStatus(state.contentCredentialsStatus);
  const archivedQuery = `&include_archived=${state.includeArchived ? "true" : "false"}`;
   $("overviewMetricsJsonLink").href = `/studio/metrics/export?format=json${archivedQuery}`;
   $("overviewMetricsCsvLink").href = `/studio/metrics/export?format=csv${archivedQuery}`;
@@ -1299,6 +1303,61 @@ function renderOperationsAlerts(alerts) {
         return '<div class="policy-row ' + (alert.severity === "critical" ? "is-blocked" : "is-warning") + '"><div><strong>' + escapeHtml(alert.code) + ' · ' + escapeHtml(localizeOperationsAlertSummary(alert)) + '</strong><span>' + status + '</span></div>' + button + '</div>';
       }).join("")
     : '<div class="policy-row"><strong>当前没有运营告警</strong><span>队列、预算、Worker 和 Provider 状态正常。</span></div>';
+}
+
+function localizeProductionGapMessage(gap) {
+  const messages = {
+    provider: "需要配置至少一个真实媒体服务商并完成健康检查。",
+    callback_security: "真实服务商回调需要配置 HMAC 签名密钥。",
+    enterprise_runtime: "需要启用企业身份、共享队列和生产存储。",
+    content_credentials: "需要可信 C2PA 签名、独立验证和管理员确认。",
+    staged_planning_checkpoint: "共享规划需要完成 PostgreSQL Checkpoint 连通性验证。",
+    delivery: "需要配置受控交付派发器。",
+  };
+  return messages[String(gap?.code || "")] || String(gap?.message || "该生产条件需要处理。");
+}
+
+function renderProductionGaps(readiness) {
+  const gaps = Array.isArray(readiness?.production_gaps) ? readiness.production_gaps : [];
+  $("productionGapCount").textContent = gaps.length ? gaps.length + " 项待完成" : "全部通过";
+  $("productionGapList").innerHTML = gaps.length
+    ? gaps.map((gap) => {
+        const blocked = String(gap.severity || "").toUpperCase() === "BLOCKER";
+        return '<div class="policy-row ' + (blocked ? "is-blocked" : "is-warning") + '"><strong>' + escapeHtml(gap.code || "生产条件") + ' · ' + (blocked ? "阻断" : "待配置") + '</strong><span>' + escapeHtml(localizeProductionGapMessage(gap)) + '</span></div>';
+      }).join("")
+    : '<div class="policy-row is-passed"><strong>生产准入条件已通过</strong><span>仍应在上线前执行真实 Provider、交付和恢复演练。</span></div>';
+}
+
+function renderC2paStatus(status) {
+  const current = status || {};
+  const attestation = current.operator_attestation || {};
+  const attestationState = String(attestation.status || "NOT_RECORDED");
+  const ready = Boolean(current.production_ready);
+  $("c2paStatusLabel").textContent = ready
+    ? "生产签名已就绪"
+    : attestationState === "VALID" ? "等待其他条件" : "待配置或确认";
+  const rows = [
+    ["签名器", current.configured ? "已配置" : "未配置"],
+    ["独立验证器", current.verifier_configured ? "已配置" : "未配置"],
+    ["可信信任材料", current.trusted_validation_configured ? "已配置" : "未配置"],
+    ["管理员确认", attestationState === "VALID" ? "有效" : attestationState === "STALE" ? "配置变更后失效" : "尚未记录"],
+  ];
+  if (attestationState === "VALID") {
+    rows.push(["确认记录", (attestation.attested_by || "管理员") + " · " + formatTimestamp(attestation.attested_at)]);
+    rows.push(["验证证据", attestation.evidence_reference || "已记录"]);
+  }
+  $("c2paStatusSummary").innerHTML = rows.map((row) =>
+    '<div class="policy-row ' + (row[1] === "已配置" || row[1] === "有效" ? "is-passed" : row[1] === "未配置" || row[1] === "尚未记录" || row[1] === "配置变更后失效" ? "is-warning" : "") + '"><strong>' + escapeHtml(row[0]) + '</strong><span>' + escapeHtml(row[1]) + '</span></div>'
+  ).join("");
+  const canAttest = Boolean(
+    current.configured
+    && current.verifier_configured
+    && current.trusted_validation_configured
+    && current.signer_identity_mode !== "builtin-test"
+    && state.currentPrincipal?.role === "admin"
+    && attestationState !== "VALID"
+  );
+  $("c2paAttestationForm").hidden = !canAttest;
 }
 
 function renderDetailPanels() {
@@ -1641,13 +1700,15 @@ async function exportTrainingDataset() {
 
 async function loadOverview() {
   const suffix = state.includeArchived ? "?include_archived=true" : "";
-  [state.overview, state.studioMetrics, state.productionReadiness, state.operationsAlerts, state.enterpriseStatus, state.billingSummary] = await Promise.all([
+  [state.overview, state.studioMetrics, state.productionReadiness, state.operationsAlerts, state.enterpriseStatus, state.billingSummary, state.contentCredentialsStatus, state.currentPrincipal] = await Promise.all([
     request(`/studio/overview${suffix}`),
     request(`/studio/metrics${suffix}`),
     request("/ops/readiness"),
     request("/ops/alerts"),
     request("/enterprise/status"),
     request("/billing/summary"),
+    request("/content-credentials/status"),
+    request("/auth/me"),
   ]);
   renderOverview();
 }
@@ -1674,6 +1735,33 @@ async function acknowledgeOperationsAlert(alertCode, button) {
     );
     renderOverview();
     logEvent("已确认运营告警：" + alertCode, "muted");
+  } catch (error) {
+    logEvent(error.message, "muted");
+    alert(error.message);
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+async function submitC2paAttestation(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector("button[type=submit]");
+  setBusy(button, true, "记录中");
+  try {
+    state.contentCredentialsStatus = await request("/content-credentials/attest", {
+      method: "POST",
+      body: JSON.stringify({
+        evidence_reference: $("c2paEvidenceReference").value.trim(),
+        evidence_sha256: $("c2paEvidenceSha256").value.trim(),
+        note: $("c2paAttestationNote").value.trim(),
+        actor: "studio-governance",
+      }),
+    });
+    state.productionReadiness = await request("/ops/readiness");
+    form.reset();
+    renderOverview();
+    logEvent("已记录 C2PA 可信验证管理员确认。", "muted");
   } catch (error) {
     logEvent(error.message, "muted");
     alert(error.message);
@@ -6999,6 +7087,7 @@ $("billingNext").addEventListener("click", () => { state.billingOffset += 20; lo
 $("billingPrevious").addEventListener("click", () => { state.billingOffset = Math.max(0, state.billingOffset - 20); loadBillingEvents(); });
 $("billingDownload").addEventListener("click", downloadBillingPage);
 $("memorySearchForm").addEventListener("submit", searchStoryMemory);
+$("c2paAttestationForm").addEventListener("submit", submitC2paAttestation);
 $("memoryRagflowSync").addEventListener("click", syncStoryMemoryToRagflow);
 $("memorySourceList").addEventListener("change", () => {
   state.memorySourceIds = Array.from($("memorySourceList").querySelectorAll("input:checked"), (input) => input.value);
