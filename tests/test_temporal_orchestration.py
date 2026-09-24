@@ -6,6 +6,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from mediaforge_p1.api import create_app
+from mediaforge_p1.auth import (
+    AuthConfigurationError,
+    AuthenticationError,
+    AuthManager,
+)
 from mediaforge_p1.contracts import CreativeBrief
 from mediaforge_p1.delivery import DeliveryDispatcher
 from mediaforge_p1.service import MediaForgeService, ProjectRuntime
@@ -256,6 +261,7 @@ def test_temporal_api_starts_and_inspects_with_injected_client(tmp_path, monkeyp
         detail = client.get(
             "/projects/temporal_api/orchestration/temporal/mediaforge:temporal_api:render:render-v1"
         )
+        listing = client.get("/projects/temporal_api/orchestration/temporal")
         canceled = client.post(
             "/projects/temporal_api/orchestration/temporal/mediaforge:temporal_api:render:render-v1/cancel",
             json={},
@@ -281,5 +287,67 @@ def test_temporal_api_starts_and_inspects_with_injected_client(tmp_path, monkeyp
     assert "actor" not in fake_client.starts[1][1]["delivery"]
     assert detail.status_code == 200
     assert detail.json()["status"] == "RUNNING"
+    assert listing.status_code == 200
+    assert listing.json()["workflows"][0]["status"] == "RUNNING"
+    assert "mediaforge_temporal_workflows{state=\"RUNNING\"} 1" in client.get("/metrics").text
     assert canceled.status_code == 200
     assert canceled.json()["canceled"] is True
+    assert canceled.json()["record"]["status"] == "CANCEL_REQUESTED"
+
+
+def test_temporal_workflow_index_persists_and_refreshes(tmp_path):
+    service = MediaForgeService(tmp_path)
+    project = ProjectRuntime(brief=CreativeBrief.model_validate(_brief("temporal_index")))
+    service.projects[project.brief.project_id] = project
+    request = TemporalOperationRequest(
+        project_id=project.brief.project_id,
+        operation="render",
+        request_id="render-v1",
+    )
+
+    service.record_temporal_event(request, state="REQUESTED", actor="studio")
+    service.record_temporal_event(
+        request,
+        state="STARTED",
+        actor="studio",
+        details={"task_queue": "mediaforge-orchestration", "run_id": "run-1"},
+    )
+    report = service.temporal_workflows(project.brief.project_id)
+
+    assert report["workflows"][0]["status"] == "RUNNING"
+    assert report["workflows"][0]["run_id"] == "run-1"
+    assert "mediaforge_temporal_workflows{state=\"RUNNING\"} 1" in service.temporal_orchestration_prometheus()
+
+    reloaded = MediaForgeService(tmp_path)
+    reloaded_report = reloaded.temporal_workflows(project.brief.project_id)
+    assert reloaded_report["workflows"][0]["workflow_id"] == request.workflow_id
+    assert reloaded_report["workflows"][0]["task_queue"] == "mediaforge-orchestration"
+
+
+def test_orchestrator_identity_is_tenant_bound_and_activity_limited(monkeypatch):
+    monkeypatch.setenv("MEDIAFORGE_AUTH_MODE", "required")
+    monkeypatch.setenv(
+        "MEDIAFORGE_API_KEYS",
+        '{"temporal":{"subject":"temporal-worker","role":"orchestrator","tenant_id":"tenant_a"}}',
+    )
+    auth = AuthManager.from_env()
+    principal = auth.authenticate("Bearer temporal")
+
+    auth.authorize(
+        principal,
+        method="POST",
+        path="/projects/project_a/export",
+    )
+    with pytest.raises(AuthenticationError, match="restricted"):
+        auth.authorize(
+            principal,
+            method="POST",
+            path="/projects/project_a/orchestration/temporal",
+        )
+
+    monkeypatch.setenv(
+        "MEDIAFORGE_API_KEYS",
+        '{"temporal":{"subject":"temporal-worker","role":"orchestrator"}}',
+    )
+    with pytest.raises(AuthConfigurationError, match="tenant_id"):
+        AuthManager.from_env()

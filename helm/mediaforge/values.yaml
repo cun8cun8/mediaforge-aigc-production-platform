@@ -137,3 +137,38 @@ worker:
       memory: 12Gi
       nvidia.com/gpu: "1"
   extraEnv: []
+
+temporal:
+  enabled: false
+  address: temporal-frontend.temporal.svc.cluster.local:7233
+  namespace: default
+  taskQueue: mediaforge-orchestration
+  tls: false
+  clientCertFile: ""
+  clientKeyFile: ""
+  serverCaFile: ""
+  activityTimeoutSeconds: 3600
+  retryMaxAttempts: 3
+  worker:
+    replicaCount: 1
+    controlPlaneTokenSecretKey: temporal-worker-token
+    podAnnotations: {}
+    podLabels: {}
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      seccompProfile:
+        type: RuntimeDefault
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+    extraEnv: []

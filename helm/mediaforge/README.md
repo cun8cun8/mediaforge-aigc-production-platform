@@ -24,6 +24,7 @@ The default mediaforge-runtime Secret needs these keys:
 | storage-endpoint | S3/MinIO endpoint |
 | api-keys | Break-glass API-key policy or Worker token policy |
 | worker-token | GPU Worker API token |
+| temporal-worker-token | Tenant-bound `orchestrator` API token for the optional Temporal Worker |
 | callback-secret | MediaForge Provider callback HMAC secret |
 | metrics-token | Metrics bearer token mounted as a file |
 
@@ -82,6 +83,15 @@ helm upgrade --install mediaforge helm/mediaforge \
 To enable the GPU Worker, set worker.enabled=true only after the Provider
 ConfigMap, NVIDIA device plugin, worker image and GPU scheduling policy are
 ready. The Worker and API intentionally share the artifact claim.
+
+To enable durable orchestration, set `temporal.enabled=true` after Temporal
+Server or Temporal Cloud, namespace, and a separate tenant-bound Worker token
+are ready. The `api-keys` Secret value must map that token to
+`{"subject":"temporal-worker","role":"orchestrator","tenant_id":"<tenant>"}`.
+The `orchestrator` identity cannot access Studio or general project APIs: it is
+restricted to generation submission, export, packaging, and dispatch Activity
+paths for its tenant. The Worker readiness probe checks Temporal and the active
+MediaForge control plane without submitting media work.
 
 ## Guardrails
 

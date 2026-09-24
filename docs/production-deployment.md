@@ -22,6 +22,7 @@ Invoke-RestMethod http://127.0.0.1:8020/llm/status
 Invoke-RestMethod http://127.0.0.1:8020/webhooks/status -Headers $headers
 Invoke-RestMethod http://127.0.0.1:8020/delivery/status -Headers $headers
 Invoke-RestMethod http://127.0.0.1:8020/quality/status -Headers $headers
+Invoke-RestMethod http://127.0.0.1:8020/orchestration/temporal/status -Headers $headers
 Invoke-RestMethod http://127.0.0.1:8020/enterprise/probe -Method Post -Headers $headers
 Invoke-RestMethod http://127.0.0.1:8020/ops/readiness -Headers $headers
 Invoke-RestMethod http://127.0.0.1:8020/ops/alerts -Headers $headers
@@ -44,6 +45,9 @@ value through `--provider-probe-secret-file` or
 `MEDIAFORGE_PROVIDER_PROBE_RECEIPT_SECRET_FILE`. `--require-production` fails
 when Mock mode, identity, shared queue, persistent storage, callback protection
 or Provider probe evidence leave the deployment below production requirements.
+When Temporal is enabled, append `--probe-temporal`; it verifies both the
+configured Worker boundary and the Temporal Server connection without submitting
+media work.
 For a concrete content release, add `--release-project <project-id>`; strict
 acceptance then requires that project to contain at least one content credential
 whose C2PA and independent verification statuses are both `SIGNED_VERIFIED`.

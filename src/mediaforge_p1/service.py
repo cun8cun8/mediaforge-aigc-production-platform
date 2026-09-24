@@ -226,6 +226,7 @@ class ProjectRuntime:
     provider_benchmarks: list[dict[str, Any]] = field(default_factory=list)
     comparison_reports: list[dict[str, Any]] = field(default_factory=list)
     deliveries: list[dict[str, Any]] = field(default_factory=list)
+    temporal_workflows: dict[str, dict[str, Any]] = field(default_factory=dict)
     delivery_feedback: list[dict[str, Any]] = field(default_factory=list)
     reference_assets: list[dict[str, Any]] = field(default_factory=list)
     members: list[dict[str, Any]] = field(default_factory=list)
@@ -373,6 +374,264 @@ class MediaForgeService:
     def temporal_probe(self) -> dict[str, Any]:
         return self.temporal.probe()
 
+    @staticmethod
+    def _temporal_execution_status(value: Any) -> str:
+        """Normalize SDK enum representations without coupling persisted state to one SDK version."""
+        status = str(value or "UNKNOWN").strip().upper()
+        status = status.replace("WORKFLOWEXECUTIONSTATUS.", "")
+        aliases = {
+            "CANCELLED": "CANCELED",
+            "CANCELLATION_REQUESTED": "CANCEL_REQUESTED",
+            "TIMEDOUT": "TIMED_OUT",
+            "CONTINUEDASNEW": "CONTINUED_AS_NEW",
+        }
+        return aliases.get(status, status)
+
+    @staticmethod
+    def _temporal_workflow_parts(
+        project_id: str,
+        workflow_id: str,
+    ) -> tuple[str, str]:
+        parts = workflow_id.split(":")
+        if (
+            len(parts) != 4
+            or parts[0] != "mediaforge"
+            or parts[1] != project_id
+            or parts[2] not in {"generation", "render", "package", "dispatch"}
+            or not parts[3]
+        ):
+            raise WorkflowError("workflow not found")
+        return parts[2], parts[3]
+
+    def _temporal_workflow_entry(
+        self,
+        project: ProjectRuntime,
+        workflow_id: str,
+        *,
+        operation: str | None = None,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        parsed_operation, parsed_request_id = self._temporal_workflow_parts(
+            project.brief.project_id,
+            workflow_id,
+        )
+        entry = project.temporal_workflows.get(workflow_id)
+        if entry is None:
+            entry = {
+                "workflow_id": workflow_id,
+                "project_id": project.brief.project_id,
+                "operation": operation or parsed_operation,
+                "request_id": request_id or parsed_request_id,
+                "status": "UNKNOWN",
+                "requested_at": None,
+                "started_at": None,
+                "updated_at": None,
+                "last_observed_at": None,
+                "run_id": None,
+                "last_error": None,
+            }
+            project.temporal_workflows[workflow_id] = entry
+        return entry
+
+    def _apply_temporal_workflow_transition(
+        self,
+        project: ProjectRuntime,
+        workflow_id: str,
+        *,
+        transition: str,
+        actor: str | None = None,
+        operation: str | None = None,
+        request_id: str | None = None,
+        shot_id: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        entry = self._temporal_workflow_entry(
+            project,
+            workflow_id,
+            operation=operation,
+            request_id=request_id,
+        )
+        now = datetime.now(timezone.utc).isoformat()
+        normalized_transition = transition.strip().upper()
+        statuses = {
+            "REQUESTED": "REQUESTED",
+            "STARTED": "RUNNING",
+            "ALREADY_STARTED": entry.get("status") or "RUNNING",
+            "START_FAILED": "START_FAILED",
+            "CANCEL_REQUESTED": "CANCEL_REQUESTED",
+            "CANCEL_SUBMITTED": "CANCEL_REQUESTED",
+        }
+        entry["status"] = statuses.get(
+            normalized_transition,
+            self._temporal_execution_status(normalized_transition),
+        )
+        entry["last_transition"] = normalized_transition
+        entry["updated_at"] = now
+        if normalized_transition == "REQUESTED" and not entry.get("requested_at"):
+            entry["requested_at"] = now
+        if normalized_transition in {"STARTED", "ALREADY_STARTED"}:
+            entry["started_at"] = entry.get("started_at") or now
+        if actor:
+            entry["actor"] = actor
+        if shot_id:
+            entry["shot_id"] = shot_id
+        for key in ("task_queue", "run_id"):
+            if details and details.get(key) is not None:
+                entry[key] = details[key]
+        if details and details.get("error"):
+            entry["last_error"] = str(details["error"])[:500]
+        elif normalized_transition in {"STARTED", "ALREADY_STARTED"}:
+            entry["last_error"] = None
+        return entry
+
+    def _observe_temporal_workflow(
+        self,
+        project: ProjectRuntime,
+        workflow_id: str,
+        description: dict[str, Any],
+    ) -> dict[str, Any]:
+        entry = self._temporal_workflow_entry(project, workflow_id)
+        now = datetime.now(timezone.utc).isoformat()
+        entry["status"] = self._temporal_execution_status(description.get("status"))
+        entry["run_id"] = description.get("run_id") or entry.get("run_id")
+        entry["workflow_type"] = description.get("workflow_type")
+        entry["started_at"] = (
+            str(description["start_time"])
+            if description.get("start_time")
+            else entry.get("started_at")
+        )
+        entry["closed_at"] = (
+            str(description["close_time"])
+            if description.get("close_time")
+            else entry.get("closed_at")
+        )
+        entry["last_observed_at"] = now
+        entry["updated_at"] = now
+        entry["last_error"] = None
+        return entry
+
+    def temporal_workflows(
+        self,
+        project_id: str,
+        *,
+        refresh: bool = False,
+    ) -> dict[str, Any]:
+        project = self._project(project_id)
+        changed = False
+        errors: list[dict[str, str]] = []
+        if refresh and self.temporal.settings.enabled:
+            active = sorted(
+                project.temporal_workflows.values(),
+                key=lambda item: str(item.get("updated_at") or ""),
+                reverse=True,
+            )[:50]
+            for entry in active:
+                workflow_id = str(entry.get("workflow_id") or "")
+                if not workflow_id:
+                    continue
+                try:
+                    before = copy.deepcopy(entry)
+                    self._observe_temporal_workflow(
+                        project,
+                        workflow_id,
+                        self.temporal.describe(workflow_id),
+                    )
+                    changed = changed or before != entry
+                except (TemporalConfigurationError, TemporalOrchestrationError) as exc:
+                    entry["last_error"] = str(exc)[:500]
+                    entry["last_observed_at"] = datetime.now(timezone.utc).isoformat()
+                    errors.append({"workflow_id": workflow_id, "error": entry["last_error"]})
+                    changed = True
+        if changed:
+            self._persist()
+        workflows = sorted(
+            (copy.deepcopy(entry) for entry in project.temporal_workflows.values()),
+            key=lambda item: str(item.get("updated_at") or ""),
+            reverse=True,
+        )
+        return {
+            "project_id": project_id,
+            "settings": self.temporal_status(),
+            "workflows": workflows,
+            "refreshed": refresh,
+            "refresh_errors": errors,
+        }
+
+    def describe_temporal_workflow(
+        self,
+        project_id: str,
+        workflow_id: str,
+    ) -> dict[str, Any]:
+        project = self._project(project_id)
+        self._temporal_workflow_parts(project_id, workflow_id)
+        description = self.temporal.describe(workflow_id)
+        entry = self._observe_temporal_workflow(project, workflow_id, description)
+        self._persist()
+        return {**description, "record": copy.deepcopy(entry)}
+
+    def cancel_temporal_workflow(
+        self,
+        project_id: str,
+        workflow_id: str,
+        *,
+        actor: str,
+    ) -> dict[str, Any]:
+        project = self._project(project_id)
+        self._ensure_active(project)
+        self._temporal_workflow_parts(project_id, workflow_id)
+        self._apply_temporal_workflow_transition(
+            project,
+            workflow_id,
+            transition="CANCEL_REQUESTED",
+            actor=actor,
+        )
+        self._record_event(
+            project,
+            action="orchestration.temporal_cancel_requested",
+            actor=actor,
+            message="Temporal workflow cancellation requested.",
+            details={"workflow_id": workflow_id},
+        )
+        self._persist()
+        result = self.temporal.cancel(workflow_id)
+        self._apply_temporal_workflow_transition(
+            project,
+            workflow_id,
+            transition="CANCEL_SUBMITTED",
+            actor=actor,
+        )
+        self._record_event(
+            project,
+            action="orchestration.temporal_canceled",
+            actor=actor,
+            message="Temporal workflow cancellation submitted.",
+            details={"workflow_id": workflow_id},
+        )
+        self._persist()
+        return {**result, "record": copy.deepcopy(project.temporal_workflows[workflow_id])}
+
+    def temporal_orchestration_prometheus(self) -> str:
+        status = self.temporal_status()
+        counts: dict[str, int] = {}
+        for project in self.projects.values():
+            for workflow in project.temporal_workflows.values():
+                state = self._temporal_execution_status(workflow.get("status"))
+                counts[state] = counts.get(state, 0) + 1
+        lines = [
+            "# HELP mediaforge_temporal_configured Whether Temporal orchestration is configured with the SDK available.",
+            "# TYPE mediaforge_temporal_configured gauge",
+            f"mediaforge_temporal_configured {1 if status.get('configured') else 0}",
+            "# HELP mediaforge_temporal_worker_control_plane_configured Whether a Temporal Worker control-plane URL is configured.",
+            "# TYPE mediaforge_temporal_worker_control_plane_configured gauge",
+            f"mediaforge_temporal_worker_control_plane_configured {1 if status.get('worker_connection_configured') else 0}",
+            "# HELP mediaforge_temporal_workflows Number of known Temporal workflows by latest observed state.",
+            "# TYPE mediaforge_temporal_workflows gauge",
+        ]
+        for workflow_state, count in sorted(counts.items()):
+            label = self._prometheus_label(workflow_state)
+            lines.append(f'mediaforge_temporal_workflows{{state="{label}"}} {count}')
+        return "\n".join(lines) + "\n"
+
     def validate_temporal_operation(self, request: TemporalOperationRequest) -> None:
         project = self._project(request.project_id)
         self._ensure_active(project)
@@ -388,6 +647,16 @@ class MediaForgeService:
         details: dict[str, Any] | None = None,
     ) -> None:
         project = self._project(request.project_id)
+        self._apply_temporal_workflow_transition(
+            project,
+            request.workflow_id,
+            transition=state,
+            actor=actor,
+            operation=request.operation,
+            request_id=request.request_id,
+            shot_id=request.shot_id,
+            details=details,
+        )
         self._record_event(
             project,
             action=f"orchestration.temporal_{state.lower()}",
@@ -16946,6 +17215,7 @@ class MediaForgeService:
             provider_benchmarks=copy.deepcopy(record.get("provider_benchmarks", [])),
             comparison_reports=copy.deepcopy(record.get("comparison_reports", [])),
             deliveries=copy.deepcopy(record.get("deliveries", [])),
+            temporal_workflows=copy.deepcopy(record.get("temporal_workflows", {})),
             delivery_feedback=copy.deepcopy(record.get("delivery_feedback", [])),
             members=copy.deepcopy(record.get("members", [])),
             comments=copy.deepcopy(record.get("comments", [])),
@@ -17411,6 +17681,7 @@ class MediaForgeService:
             "provider_benchmarks": project.provider_benchmarks,
             "comparison_reports": project.comparison_reports,
             "deliveries": project.deliveries,
+            "temporal_workflows": copy.deepcopy(project.temporal_workflows),
             "delivery_feedback": project.delivery_feedback,
             "shots": [
                 {

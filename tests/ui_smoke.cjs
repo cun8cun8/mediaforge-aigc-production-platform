@@ -34,6 +34,10 @@ async function main() {
     });
     assert.notEqual(await page.locator("#overviewAlerts").innerText(), "检查中");
     await page.locator(`[data-project-id="${projectId}"]`).click();
+    await page.getByRole("button", { name: "编排", exact: true }).click();
+    await page.waitForFunction(() => document.getElementById("temporalRuntime").textContent.includes("Temporal 服务"));
+    assert(await page.locator("#temporalStart").isDisabled(), "Temporal starts remain disabled until the optional runtime is configured");
+    await page.screenshot({ path: path.join(root, "temporal-disabled-desktop.png"), fullPage: true });
     await page.getByRole("button", { name: "故事记忆", exact: true }).click();
     await page.locator("#memorySearchButton").waitFor({ state: "visible" });
     await page.locator("#memoryQuery").fill("林夏");
@@ -101,7 +105,7 @@ async function main() {
     }
     assert.deepEqual(errors, []);
     const report = { passed: true, project_id: projectId, viewports: [1440, 768, 390], page_errors: errors,
-      checks: ["memory search and empty state", "enterprise probe", "memory backend and probe", "Stripe settlement callback runtime state", "SIEM runtime state", "billing filters and download", "quality recheck response", "video playback", "audit hash-chain verification and export", "voiceover input", "responsive overflow"], screenshots: root };
+      checks: ["Temporal orchestration disabled state", "memory search and empty state", "enterprise probe", "memory backend and probe", "Stripe settlement callback runtime state", "SIEM runtime state", "billing filters and download", "quality recheck response", "video playback", "audit hash-chain verification and export", "voiceover input", "responsive overflow"], screenshots: root };
     await fs.writeFile(path.join(root, "report.json"), JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report));
   } finally {

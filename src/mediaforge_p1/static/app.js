@@ -45,6 +45,12 @@ const state = {
   planningRunId: null,
   planningBusy: false,
   planningPermissions: {},
+  temporalGeneration: 0,
+  temporalReport: null,
+  temporalBusy: false,
+  temporalSelectedWorkflowId: null,
+  temporalDetail: null,
+  temporalPermissions: {},
   narrativeEventEditingId: null,
   adaptationSceneEditingId: null,
   sourceChapterEditingId: null,
@@ -286,6 +292,12 @@ const PROVIDER_DETAIL_LABELS = {
 };
 
 const ACTION_LABELS = {
+  "orchestration.temporal_requested": "编排请求创建",
+  "orchestration.temporal_started": "编排工作流启动",
+  "orchestration.temporal_already_started": "编排工作流复用",
+  "orchestration.temporal_start_failed": "编排工作流启动失败",
+  "orchestration.temporal_cancel_requested": "编排取消请求",
+  "orchestration.temporal_canceled": "编排取消已提交",
   "planning.approved": "规划审批",
   "narrative_event.created": "故事事件创建",
   "narrative_event.updated": "故事事件修订",
@@ -2020,7 +2032,7 @@ async function loadProjectContextNow(projectId) {
     state.sourceChapterEditingId = null;
     state.providerContract = null;
   }
-  const [project, cost, jobs, audit, operations, assets, evaluation, llmops, editTimeline, benchmark, routes, compliance, continuity, distribution, trace, retrospective, collaboration, collaborationDocuments, dataset, sourceOcrStatus] = await Promise.all([
+  const [project, cost, jobs, audit, operations, assets, evaluation, llmops, editTimeline, benchmark, routes, compliance, continuity, distribution, trace, retrospective, collaboration, collaborationDocuments, dataset, sourceOcrStatus, temporalReport] = await Promise.all([
     request(`/projects/${encodeURIComponent(projectId)}`),
     request(`/projects/${encodeURIComponent(projectId)}/cost`),
     request(`/projects/${encodeURIComponent(projectId)}/jobs`),
@@ -2041,6 +2053,7 @@ async function loadProjectContextNow(projectId) {
     request(`/projects/${encodeURIComponent(projectId)}/collaboration/documents`),
     request(`/projects/${encodeURIComponent(projectId)}/training-dataset`),
     request("/source-ingest/status"),
+    request(`/projects/${encodeURIComponent(projectId)}/orchestration/temporal`),
   ]);
   if (generation !== state.projectGeneration || identityGeneration !== state.identityGeneration) return;
   state.project = project;
@@ -2066,6 +2079,7 @@ async function loadProjectContextNow(projectId) {
   state.collaborationDocuments = collaborationDocuments;
   state.dataset = dataset;
   state.sourceOcrStatus = sourceOcrStatus;
+  state.temporalReport = temporalReport;
   state.projectId = projectId;
   syncDialogueDraft(project, switchingProject || !state.dialogueDirty);
   connectProjectEvents(projectId, state.audit.length);
@@ -2154,6 +2168,7 @@ async function loadProjectContextNow(projectId) {
   renderProject();
   renderDetailPanels();
   if (state.activeTab === "memory") await loadMemorySources();
+  if (state.activeTab === "temporal") renderTemporalPanel();
   await loadPlanningPanel();
 }
 
@@ -2183,6 +2198,7 @@ function setActiveTab(tabName) {
     narrative: "narrativeTabView",
     script: "scriptTabView",
     planning: "planningTabView",
+    temporal: "temporalTabView",
     enterprise: "enterpriseTabView",
   };
   Object.entries(views).forEach(([name, id]) => {
@@ -2191,6 +2207,135 @@ function setActiveTab(tabName) {
   if (tabName === "memory") loadMemorySources();
   if (tabName === "enterprise") loadEnterprisePanel();
   if (tabName === "planning") loadPlanningPanel();
+  if (tabName === "temporal") loadTemporalPanel();
+}
+
+const temporalStatusLabel = (value) => ({
+  REQUESTED: "等待提交", RUNNING: "运行中", COMPLETED: "已完成", FAILED: "失败",
+  CANCELED: "已取消", CANCEL_REQUESTED: "取消中", TERMINATED: "已终止",
+  TIMED_OUT: "已超时", CONTINUED_AS_NEW: "已续接", START_FAILED: "启动失败", UNKNOWN: "未知",
+}[value] || value);
+
+function temporalRequestId() {
+  if (window.crypto?.randomUUID) return `studio-${window.crypto.randomUUID().replace(/-/g, "")}`;
+  return `studio-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function resetTemporalRequestId() { $("temporalRequestId").value = temporalRequestId(); }
+
+function renderTemporalOperationFields() {
+  const operation = $("temporalOperation").value;
+  const shots = (state.project?.shots || []).map((item) => item.shot || item);
+  const currentShot = $("temporalShotId").value;
+  $("temporalShotField").hidden = operation !== "generation";
+  $("temporalDeliveryFields").hidden = operation !== "dispatch";
+  $("temporalShotId").innerHTML = shots.length
+    ? shots.map((shot) => `<option value="${escapeHtml(shot.shot_id)}">${escapeHtml(shot.shot_id)} · ${escapeHtml(shot.scene || "未命名场景")}</option>`).join("")
+    : `<option value="">暂无镜头</option>`;
+  if (shots.some((shot) => shot.shot_id === currentShot)) $("temporalShotId").value = currentShot;
+}
+
+function temporalCanManage() {
+  return Boolean(state.temporalReport?.settings?.configured)
+    && Boolean(state.projectId) && !state.project?.archived && !state.project?.release
+    && Boolean(state.temporalPermissions.manage);
+}
+
+function renderTemporalPanel() {
+  const report = state.temporalReport || {};
+  const settings = report.settings || {};
+  const workflows = report.workflows || [];
+  const enabled = Boolean(settings.enabled && settings.configured);
+  $("temporalRuntime").innerHTML = runtimeRow(
+    "Temporal 服务", enabled ? "已启用" : "未启用",
+    settings.last_error || (settings.sdk_available ? `${settings.address || "未配置"} · ${settings.namespace || "default"}` : "未安装 Temporal SDK"),
+  ) + runtimeRow(
+    "任务队列", settings.task_queue || "未配置",
+    settings.worker_connection_configured ? "执行器控制面地址已配置" : "执行器控制面地址未配置",
+  ) + runtimeRow("连接状态", settings.client_ready ? "已连接" : "未验证", settings.tls ? "TLS 已启用" : "明文连接");
+  const errors = report.refresh_errors || [];
+  $("temporalMessage").textContent = errors.length
+    ? `刷新失败 ${errors.length} 个工作流：${errors[0].error}`
+    : (!enabled ? "需在部署环境启用 Temporal 后提交工作流" : "");
+  $("temporalWorkflowCount").textContent = `${workflows.length} 个工作流`;
+  $("temporalWorkflowList").innerHTML = workflows.length
+    ? workflows.map((workflow) => {
+      const stateValue = workflow.status || "UNKNOWN";
+      const cancelable = ["REQUESTED", "RUNNING", "CANCEL_REQUESTED"].includes(stateValue);
+      return `<div class="temporal-workflow-row"><div><strong>${escapeHtml(workflow.operation || "未知操作")} · ${escapeHtml(temporalStatusLabel(stateValue))}</strong><span>${escapeHtml(workflow.workflow_id)} · ${escapeHtml(workflow.shot_id || workflow.request_id || "")}</span></div><div class="temporal-row-actions"><button class="button button-quiet" type="button" data-temporal-inspect="${escapeHtml(workflow.workflow_id)}">查看</button>${cancelable ? `<button class="button button-reject" type="button" data-temporal-cancel="${escapeHtml(workflow.workflow_id)}" ${temporalCanManage() ? "" : "disabled"}>取消</button>` : ""}</div></div>`;
+    }).join("")
+    : `<div class="project-empty">暂无工作流记录</div>`;
+  renderTemporalOperationFields();
+  $("temporalStart").disabled = !temporalCanManage() || state.temporalBusy || ($("temporalOperation").value === "generation" && !$("temporalShotId").value);
+  const detail = state.temporalDetail;
+  $("temporalDetail").hidden = !detail;
+  $("temporalDetail").innerHTML = detail
+    ? `<div class="policy-row"><strong>${escapeHtml(detail.workflow_id || "工作流")}</strong><p>${escapeHtml(temporalStatusLabel(detail.status || detail.record?.status || "UNKNOWN"))}${detail.run_id ? ` · ${escapeHtml(detail.run_id)}` : ""}</p><pre>${escapeHtml(JSON.stringify(detail.record || detail, null, 2))}</pre></div>`
+    : "";
+}
+
+async function loadTemporalPanel(refresh = false) {
+  const projectId = state.projectId;
+  if (!projectId) return;
+  const generation = ++state.temporalGeneration;
+  const identityGeneration = state.identityGeneration;
+  try {
+    const [report, me] = await Promise.all([
+      request(`/projects/${encodeURIComponent(projectId)}/orchestration/temporal${refresh ? "?refresh=true" : ""}`), request("/auth/me"),
+    ]);
+    if (projectId !== state.projectId || generation !== state.temporalGeneration || identityGeneration !== state.identityGeneration) return;
+    state.temporalReport = report;
+    const member = state.collaboration?.members?.find((item) => item.subject === me.subject);
+    state.temporalPermissions = {manage: me.role === "admin" || (["editor", "publisher"].includes(me.role) && ["editor", "publisher", "owner"].includes(member?.role))};
+    renderTemporalPanel();
+  } catch (error) {
+    if (generation !== state.temporalGeneration || identityGeneration !== state.identityGeneration) return;
+    $("temporalMessage").textContent = error.message;
+  }
+}
+
+async function startTemporalWorkflow(event) {
+  event.preventDefault();
+  if (!temporalCanManage() || state.temporalBusy || !state.projectId) return;
+  const operation = $("temporalOperation").value;
+  const payload = {operation, request_id: $("temporalRequestId").value.trim(), actor: "studio-orchestration"};
+  if (operation === "generation") payload.shot_id = $("temporalShotId").value;
+  if (operation === "dispatch") payload.delivery = {channel: $("temporalDeliveryChannel").value.trim(), recipient: $("temporalDeliveryRecipient").value.trim(), destination_uri: $("temporalDeliveryDestination").value.trim() || null, note: $("temporalDeliveryNote").value.trim() || null};
+  state.temporalBusy = true;
+  renderTemporalPanel();
+  try {
+    const result = await request(`/projects/${encodeURIComponent(state.projectId)}/orchestration/temporal`, {method: "POST", body: JSON.stringify(payload)});
+    state.temporalSelectedWorkflowId = result.workflow_id;
+    state.temporalDetail = result;
+    $("temporalMessage").textContent = result.already_started ? "已复用已有工作流" : "工作流已提交";
+    if (!result.already_started) resetTemporalRequestId();
+    await loadTemporalPanel(true);
+  } catch (error) {
+    $("temporalMessage").textContent = error.message;
+  } finally {
+    state.temporalBusy = false;
+    renderTemporalPanel();
+  }
+}
+
+async function inspectTemporalWorkflow(workflowId) {
+  if (!state.projectId || !workflowId) return;
+  try {
+    state.temporalDetail = await request(`/projects/${encodeURIComponent(state.projectId)}/orchestration/temporal/${encodeURIComponent(workflowId)}`);
+    state.temporalSelectedWorkflowId = workflowId;
+    renderTemporalPanel();
+  } catch (error) { $("temporalMessage").textContent = error.message; }
+}
+
+async function cancelTemporalWorkflow(workflowId, button) {
+  if (!state.projectId || !temporalCanManage()) return;
+  setBusy(button, true, "取消中");
+  try {
+    state.temporalDetail = await request(`/projects/${encodeURIComponent(state.projectId)}/orchestration/temporal/${encodeURIComponent(workflowId)}/cancel`, {method: "POST", body: JSON.stringify({actor: "studio-orchestration"})});
+    $("temporalMessage").textContent = "已提交取消请求";
+    await loadTemporalPanel(true);
+  } catch (error) { $("temporalMessage").textContent = error.message; }
+  finally { setBusy(button, false); renderTemporalPanel(); }
 }
 
 const planningStatusLabel = (value) => ({RUNNING: "执行中", INTERRUPTED: "执行中断", FAILED: "阶段失败", AWAITING_REVIEW: "等待人工确认", READY_TO_APPLY: "待应用", APPROVED: "已应用", REJECTED: "已退回", CANCELED: "已取消"}[value] || value);
@@ -7082,6 +7227,15 @@ $("planningRefresh").addEventListener("click", loadPlanningPanel);
 $("planningRunSelect").addEventListener("change", () => { state.planningRunId = $("planningRunSelect").value; renderPlanningRun(); });
 $("planningComment").addEventListener("input", renderPlanningControls);
 for (const action of ["Start", "Approve", "Revise", "Reject", "Resume", "Migrate", "Cancel"]) $("planning" + action).addEventListener("click", () => performPlanningAction(action.toLowerCase()));
+$("temporalRefresh").addEventListener("click", () => loadTemporalPanel(true));
+$("temporalOperation").addEventListener("change", () => { renderTemporalOperationFields(); renderTemporalPanel(); });
+$("temporalStartForm").addEventListener("submit", startTemporalWorkflow);
+$("temporalWorkflowList").addEventListener("click", (event) => {
+  const inspect = event.target.closest("[data-temporal-inspect]");
+  const cancel = event.target.closest("[data-temporal-cancel]");
+  if (inspect) inspectTemporalWorkflow(inspect.dataset.temporalInspect);
+  if (cancel) cancelTemporalWorkflow(cancel.dataset.temporalCancel, cancel);
+});
 $("billingFilterForm").addEventListener("submit", (event) => { event.preventDefault(); state.billingOffset = 0; loadBillingEvents(); });
 $("billingNext").addEventListener("click", () => { state.billingOffset += 20; loadBillingEvents(); });
 $("billingPrevious").addEventListener("click", () => { state.billingOffset = Math.max(0, state.billingOffset - 20); loadBillingEvents(); });
@@ -7099,6 +7253,7 @@ $("memorySourceList").addEventListener("change", () => {
 const stamp = timestampKey();
 $("projectId").value = `drama_studio_${stamp}`;
 $("workerIdInput").value = window.localStorage.getItem("mediaforge.workerId") || "studio-worker";
+resetTemporalRequestId();
 setActiveTab("inspector");
 resetSourceChapterForm();
 resetNarrativeEventForm();

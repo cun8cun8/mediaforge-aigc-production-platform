@@ -10,7 +10,7 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src ./src
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir '.[enterprise,agents]'
+    && pip install --no-cache-dir '.[enterprise,agents,temporal]'
 
 RUN mkdir -p /var/lib/mediaforge/artifacts
 VOLUME ["/var/lib/mediaforge"]

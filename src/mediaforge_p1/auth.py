@@ -50,6 +50,7 @@ class AuthManager:
     role_levels = {
         "viewer": 10,
         "provider": 20,
+        "orchestrator": 20,
         "reviewer": 30,
         "editor": 30,
         "publisher": 40,
@@ -118,10 +119,15 @@ class AuthManager:
                         raise AuthConfigurationError(f"unsupported API key role: {role}")
                     subject = str(raw_principal.get("subject") or token[:8]).strip()
                     tenant_id = raw_principal.get("tenant_id")
+                    normalized_tenant_id = str(tenant_id).strip() if tenant_id else None
+                    if role == "orchestrator" and not normalized_tenant_id:
+                        raise AuthConfigurationError(
+                            "orchestrator API keys must declare a tenant_id"
+                        )
                     principal = Principal(
                         subject=subject,
                         role=role,
-                        tenant_id=str(tenant_id).strip() if tenant_id else None,
+                        tenant_id=normalized_tenant_id,
                         authenticated=True,
                     )
                 else:
@@ -416,6 +422,13 @@ class AuthManager:
             return
         if path == "/auth/logout":
             return
+        if principal.role == "orchestrator":
+            if self.is_temporal_activity_process(method=method, path=path):
+                return
+            raise AuthenticationError(
+                "orchestrator credentials are restricted to Temporal activity paths",
+                status_code=403,
+            )
         if (
             path.startswith("/providers/")
             and path.endswith("/circuit/recover")
@@ -509,3 +522,15 @@ class AuthManager:
     def is_worker_process(*, method: str, path: str) -> bool:
         parts = path.strip("/").split("/")
         return method.upper() == "POST" and len(parts) == 5 and parts[0] == "projects" and parts[2] == "jobs" and parts[4] == "process"
+
+    @staticmethod
+    def is_temporal_activity_process(*, method: str, path: str) -> bool:
+        """Limit the durable Worker to existing, policy-enforcing operations."""
+        if method.upper() != "POST":
+            return False
+        parts = path.strip("/").split("/")
+        if len(parts) == 3 and parts[0] == "projects" and parts[2] in {"export", "package"}:
+            return True
+        if len(parts) == 5 and parts[0] == "projects" and parts[2] == "shots" and parts[4] == "submit":
+            return True
+        return len(parts) == 4 and parts[0] == "projects" and parts[2:] == ["deliveries", "dispatch"]

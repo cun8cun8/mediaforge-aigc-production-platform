@@ -8,3 +8,21 @@ data:
   {{- range $key, $value := .Values.runtime.config }}
   {{ $key }}: {{ $value | quote }}
   {{- end }}
+  {{- if .Values.temporal.enabled }}
+  MEDIAFORGE_TEMPORAL_ENABLED: "true"
+  MEDIAFORGE_TEMPORAL_ADDRESS: {{ .Values.temporal.address | quote }}
+  MEDIAFORGE_TEMPORAL_NAMESPACE: {{ .Values.temporal.namespace | quote }}
+  MEDIAFORGE_TEMPORAL_TASK_QUEUE: {{ .Values.temporal.taskQueue | quote }}
+  MEDIAFORGE_TEMPORAL_TLS: {{ .Values.temporal.tls | quote }}
+  MEDIAFORGE_TEMPORAL_ACTIVITY_TIMEOUT_SECONDS: {{ .Values.temporal.activityTimeoutSeconds | quote }}
+  MEDIAFORGE_TEMPORAL_RETRY_MAX_ATTEMPTS: {{ .Values.temporal.retryMaxAttempts | quote }}
+  {{- with .Values.temporal.clientCertFile }}
+  MEDIAFORGE_TEMPORAL_CLIENT_CERT_FILE: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.temporal.clientKeyFile }}
+  MEDIAFORGE_TEMPORAL_CLIENT_KEY_FILE: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.temporal.serverCaFile }}
+  MEDIAFORGE_TEMPORAL_SERVER_CA_FILE: {{ . | quote }}
+  {{- end }}
+  {{- end }}

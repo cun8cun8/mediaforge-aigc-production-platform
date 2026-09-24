@@ -23,7 +23,7 @@ jobs:
         with:
           node-version: "22"
       - name: Install runtime and test dependencies
-        run: python -m pip install -e ".[dev,enterprise,agents]"
+        run: python -m pip install -e ".[dev,enterprise,agents,temporal]"
       - name: Compile Python
         run: python -m compileall -q src tests
       - name: Check read-only load script syntax
@@ -70,6 +70,12 @@ jobs:
             --set image.tag=ci \
             --set worker.enabled=true \
             > /dev/null
+          helm template mediaforge helm/mediaforge \
+            --namespace mediaforge \
+            --set image.repository=ghcr.io/example/mediaforge \
+            --set image.tag=ci \
+            --set temporal.enabled=true \
+            > /dev/null
           if helm template invalid helm/mediaforge \
             --set persistence.accessModes[0]=ReadWriteOnce > /dev/null; then
             echo "Helm chart accepted an unsafe multi-replica non-RWX volume." >&2
@@ -97,7 +103,7 @@ jobs:
           cache: npm
       - name: Install application and browser dependencies
         run: |
-          python -m pip install -e ".[enterprise,agents]"
+          python -m pip install -e ".[enterprise,agents,temporal]"
           npm ci
           npx playwright install --with-deps chromium
       - name: Run Chinese Studio browser acceptance

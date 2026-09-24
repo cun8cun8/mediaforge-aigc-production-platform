@@ -883,13 +883,20 @@ def create_app(output_root: Path | None = None) -> FastAPI:
                 if project and project.brief.tenant_id != principal.tenant_id:
                     raise AuthenticationError("project not found", status_code=404)
             worker_process = principal.role == "provider" and auth_manager.is_worker_process(method=request.method, path=request.url.path)
+            temporal_activity_process = (
+                principal.role == "orchestrator"
+                and auth_manager.is_temporal_activity_process(
+                    method=request.method,
+                    path=request.url.path,
+                )
+            )
             if worker_process:
                 worker_id = request.query_params.get("worker_id")
                 worker = service.workers.get(worker_id) if worker_id else None
                 if worker is None or (principal.tenant_id and worker.get("tenant_id") != principal.tenant_id):
                     raise AuthenticationError("a Worker registered for this tenant is required", status_code=403)
                 # process_job also verifies job ownership, current lease and lease expiry.
-            if project_id and principal.role != "admin" and not worker_process:
+            if project_id and principal.role != "admin" and not worker_process and not temporal_activity_process:
                 project = service.projects.get(project_id)
                 required_role = service.required_project_role(
                     method=request.method,
@@ -1028,6 +1035,7 @@ def create_app(output_root: Path | None = None) -> FastAPI:
             app.state.http_metrics.prometheus()
             + service.runtime_metrics.prometheus()
             + service.provider_circuits_prometheus()
+            + service.temporal_orchestration_prometheus()
             + service.operations_alerts_prometheus()
         )
 
@@ -1114,17 +1122,24 @@ def create_app(output_root: Path | None = None) -> FastAPI:
         project_id: str,
         workflow_id: str,
     ) -> dict[str, Any]:
-        if not workflow_id.startswith(f"mediaforge:{project_id}:"):
-            raise HTTPException(status_code=404, detail="workflow not found")
         try:
-            service._project(project_id)
-            return service.temporal.describe(workflow_id)
+            return service.describe_temporal_workflow(project_id, workflow_id)
         except ProjectNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except TemporalConfigurationError as exc:
+        except (TemporalConfigurationError, WorkflowError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except TemporalOrchestrationError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.get("/projects/{project_id}/orchestration/temporal")
+    def list_temporal_orchestrations(
+        project_id: str,
+        refresh: bool = Query(default=False),
+    ) -> dict[str, Any]:
+        try:
+            return service.temporal_workflows(project_id, refresh=refresh)
+        except ProjectNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.post("/projects/{project_id}/orchestration/temporal/{workflow_id}/cancel")
     def cancel_temporal_orchestration(
@@ -1133,31 +1148,14 @@ def create_app(output_root: Path | None = None) -> FastAPI:
         payload: TemporalCancelRequest,
         request: Request,
     ) -> dict[str, Any]:
-        if not workflow_id.startswith(f"mediaforge:{project_id}:"):
-            raise HTTPException(status_code=404, detail="workflow not found")
         principal = request.state.principal
         actor = principal.subject if principal.authenticated else payload.actor
         try:
-            project = service._project(project_id)
-            service._ensure_active(project)
-            service._record_event(
-                project,
-                action="orchestration.temporal_cancel_requested",
+            return service.cancel_temporal_workflow(
+                project_id,
+                workflow_id,
                 actor=actor,
-                message="Temporal workflow cancellation requested.",
-                details={"workflow_id": workflow_id},
             )
-            service._persist()
-            result = service.temporal.cancel(workflow_id)
-            service._record_event(
-                project,
-                action="orchestration.temporal_canceled",
-                actor=actor,
-                message="Temporal workflow cancellation submitted.",
-                details={"workflow_id": workflow_id},
-            )
-            service._persist()
-            return result
         except ProjectNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except (TemporalConfigurationError, WorkflowError) as exc:

@@ -90,6 +90,7 @@ def run_production_acceptance(
     require_production: bool = False,
     probe_enterprise: bool = False,
     probe_planning: bool = False,
+    probe_temporal: bool = False,
     provider_probe_receipts: list[Path] | None = None,
     provider_probe_secret: str = "",
     provider_probe_max_age_hours: float = 168.0,
@@ -580,6 +581,47 @@ def run_production_acceptance(
         except AcceptanceError as exc:
             checks.append(_check(code, False, True, str(exc)))
 
+    if probe_temporal:
+        temporal_status = get("temporal_status", "/orchestration/temporal/status")
+        if temporal_status is not None:
+            configured = bool(temporal_status.get("configured"))
+            worker_configured = bool(temporal_status.get("worker_connection_configured"))
+            checks.append(
+                _check(
+                    "temporal_configuration",
+                    configured and worker_configured,
+                    True,
+                    "Temporal SDK and Worker control-plane connection are configured."
+                    if configured and worker_configured
+                    else "Temporal SDK, server configuration, or Worker control-plane connection is incomplete.",
+                    {
+                        "enabled": bool(temporal_status.get("enabled")),
+                        "configured": configured,
+                        "worker_connection_configured": worker_configured,
+                    },
+                )
+            )
+        try:
+            result = fetch_json(
+                base_url,
+                "/orchestration/temporal/probe",
+                token=token,
+                method="POST",
+            )
+            checks.append(
+                _check(
+                    "temporal_probe",
+                    bool(result.get("connected")),
+                    True,
+                    "Temporal Server connection probe passed."
+                    if result.get("connected")
+                    else "Temporal Server connection probe failed.",
+                    {"connected": bool(result.get("connected"))},
+                )
+            )
+        except AcceptanceError as exc:
+            checks.append(_check("temporal_probe", False, True, str(exc)))
+
     blocking_failures = [item["code"] for item in checks if item["blocking"] and not item["passed"]]
     warnings = [item["code"] for item in checks if not item["blocking"] and not item["passed"]]
     return {
@@ -623,6 +665,7 @@ def main() -> int:
     parser.add_argument("--require-production", action="store_true")
     parser.add_argument("--probe-enterprise", action="store_true")
     parser.add_argument("--probe-planning", action="store_true")
+    parser.add_argument("--probe-temporal", action="store_true")
     parser.add_argument(
         "--release-project",
         action="append",
@@ -688,6 +731,7 @@ def main() -> int:
             require_production=args.require_production,
             probe_enterprise=args.probe_enterprise,
             probe_planning=args.probe_planning,
+            probe_temporal=args.probe_temporal,
             provider_probe_receipts=args.provider_probe_receipt,
             provider_probe_secret=provider_probe_secret,
             provider_probe_max_age_hours=args.provider_probe_max_age_hours,

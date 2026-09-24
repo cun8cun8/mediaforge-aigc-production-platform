@@ -53,6 +53,8 @@ Invoke-RestMethod `
 
 - Temporal API/Worker 仅传递项目 ID、镜头 ID、交付字段和版本元数据，不传递密钥或原始媒体。
 - Worker 需要一个最小权限的 MediaForge API 身份；推荐通过 secret file 注入 bearer token。
+  使用 `role=orchestrator` 并显式设置 `tenant_id`。该身份只能调用生成提交、导出、
+  打包和分发四条 Activity 路径，不能访问 Studio 或任意项目管理接口。
 - Temporal Server/Cloud 的 TLS、命名空间、保留期、可用区和备份由部署侧负责。
 - 先在 staging 使用 `POST /orchestration/temporal/probe`、真实 Worker 和故障恢复演练，再切换生产流量。
 - 未启用 Temporal 时，原生 lease Worker 仍是完整可用的执行路径。

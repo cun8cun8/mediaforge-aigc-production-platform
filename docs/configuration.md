@@ -340,10 +340,19 @@ existing authenticated MediaForge API, so configure
 `MEDIAFORGE_TEMPORAL_CONTROL_PLANE_TOKEN_FILE` whenever the API requires a
 bearer token.
 
+`GET /projects/{id}/orchestration/temporal` returns the durable project-side
+workflow index. Add `?refresh=true` to inspect known workflows at Temporal
+without creating new work. The Studio "编排" tab uses this index for status,
+inspection and cancellation. Configure the Worker token as a tenant-bound
+`orchestrator` API key; this service identity is limited to the four Activity
+paths and cannot access general Studio APIs.
+
 For production, enable TLS and provide the client certificate, private key and
 server CA as protected files. Do not put Temporal credentials in source,
 Compose files or workflow payloads. Run `POST /orchestration/temporal/probe`
 and review `GET /ops/readiness` before routing real work to the queue.
+Run `mediaforge-temporal-worker --check` in the Worker runtime and include
+`mediaforge-production-acceptance --probe-temporal` in staging acceptance.
 
 The integration follows Temporal's durable Workflow/Activity model; see the
 [official Python SDK](https://github.com/temporalio/sdk-python) and

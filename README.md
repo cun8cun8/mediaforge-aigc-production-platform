@@ -205,6 +205,9 @@ mediaforge-production-acceptance `
   --require-production
 ```
 
+启用 Temporal 后，在同一命令中追加 `--probe-temporal`，以验证编排服务和 Worker
+控制面连接，而不提交媒体任务。
+
 ## 工程结构
 
 ```text

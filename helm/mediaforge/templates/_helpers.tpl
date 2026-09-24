@@ -74,6 +74,15 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if and .Values.worker.enabled (not .Values.persistence.enabled) }}
 {{- fail "worker.enabled requires persistence.enabled=true so API and Worker share artifacts" }}
 {{- end }}
+{{- if and .Values.temporal.enabled (not .Values.temporal.worker.controlPlaneTokenSecretKey) }}
+{{- fail "temporal.worker.controlPlaneTokenSecretKey is required when temporal.enabled=true" }}
+{{- end }}
+{{- if and .Values.temporal.enabled (not .Values.temporal.address) }}
+{{- fail "temporal.address is required when temporal.enabled=true" }}
+{{- end }}
+{{- if and .Values.temporal.enabled (not .Values.temporal.namespace) }}
+{{- fail "temporal.namespace is required when temporal.enabled=true" }}
+{{- end }}
 {{- if and .Values.ingress.enabled (eq (len .Values.ingress.hosts) 0) }}
 {{- fail "ingress.enabled requires at least one ingress.hosts entry" }}
 {{- end }}

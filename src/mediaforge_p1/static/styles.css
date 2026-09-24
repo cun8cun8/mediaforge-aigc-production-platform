@@ -540,6 +540,20 @@ input:focus, textarea:focus, select:focus {
 .provider-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 18px 0 10px; }
 .provider-actions .button { flex: 1 1 0; min-width: 0; padding-left: 8px; padding-right: 8px; }
 .provider-actions .mini-label { flex: 1 0 100%; text-align: right; }
+.temporal-form { display: grid; gap: 9px; margin: 14px 0; padding: 10px; border: 1px solid var(--line); background: #f8faf7; }
+.temporal-form label { display: grid; gap: 5px; color: var(--muted); font-size: 11px; font-weight: 700; }
+.temporal-form input, .temporal-form select, .temporal-form textarea { width: 100%; min-width: 0; padding: 8px 9px; border: 1px solid var(--line); border-radius: 4px; background: #fff; color: var(--ink); font-size: 12px; }
+.temporal-delivery-fields { display: grid; gap: 9px; }
+.temporal-list-heading { margin-top: 16px; }
+.temporal-workflow-list { max-height: 340px; overflow: auto; border-top: 1px solid var(--line); }
+.temporal-workflow-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 10px 0; border-bottom: 1px solid #edf0ed; }
+.temporal-workflow-row strong, .temporal-workflow-row span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.temporal-workflow-row strong { font-size: 11px; }
+.temporal-workflow-row span { margin-top: 4px; color: var(--muted); font-size: 10px; }
+.temporal-row-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.temporal-row-actions .button { min-height: 28px; padding: 5px 8px; font-size: 10px; }
+.temporal-detail { margin-top: 12px; }
+.temporal-detail pre { max-height: 220px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .provider-recovery-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; margin: 8px 0 14px; }
 .provider-recovery-actions label { min-width: 0; color: var(--muted); font-size: 10px; font-weight: 760; }
 .provider-recovery-actions select { display: block; width: 100%; min-width: 0; margin-top: 5px; }

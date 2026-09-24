@@ -318,6 +318,7 @@
             <button class="tab-button" type="button" data-panel-tab="narrative">故事事件</button>
             <button class="tab-button" type="button" data-panel-tab="script">剧本场次</button>
             <button class="tab-button" type="button" data-panel-tab="planning">分步规划</button>
+            <button class="tab-button" type="button" data-panel-tab="temporal">编排</button>
             <button class="tab-button" type="button" data-panel-tab="enterprise">运行与账单</button>
           </div>
           <div id="inspectorTabView" class="tab-view">
@@ -543,6 +544,31 @@
               <button id="planningMigrate" class="button button-secondary" type="button" disabled>迁移草稿</button>
               <button id="planningCancel" class="button button-quiet" type="button" disabled>取消规划</button>
             </div>
+          </div>
+
+          <div id="temporalTabView" class="tab-view" hidden>
+            <div class="inspector-heading"><h2>持久化编排</h2><button id="temporalRefresh" class="icon-button" type="button" title="刷新工作流状态" aria-label="刷新工作流状态">↻</button></div>
+            <div id="temporalRuntime" class="runtime-list" aria-live="polite"></div>
+            <div id="temporalMessage" class="mini-label" role="status"></div>
+            <form id="temporalStartForm" class="temporal-form">
+              <div class="field-grid">
+                <label>操作<select id="temporalOperation"><option value="generation">生成镜头</option><option value="render">导出成片</option><option value="package">构建交付包</option><option value="dispatch">分发交付</option></select></label>
+                <label>请求标识<input id="temporalRequestId" maxlength="160" required /></label>
+              </div>
+              <label id="temporalShotField">镜头<select id="temporalShotId"></select></label>
+              <div id="temporalDeliveryFields" class="temporal-delivery-fields" hidden>
+                <div class="field-grid">
+                  <label>渠道<input id="temporalDeliveryChannel" maxlength="120" value="review" /></label>
+                  <label>接收方<input id="temporalDeliveryRecipient" maxlength="500" /></label>
+                </div>
+                <label>目标地址<input id="temporalDeliveryDestination" maxlength="2000" placeholder="可选" /></label>
+                <label>备注<textarea id="temporalDeliveryNote" rows="2" maxlength="2000"></textarea></label>
+              </div>
+              <div class="narrative-form-actions"><button id="temporalStart" class="button button-secondary" type="submit" disabled>提交工作流</button></div>
+            </form>
+            <div class="panel-heading temporal-list-heading"><span id="temporalWorkflowCount" class="mini-label">0 个工作流</span></div>
+            <div id="temporalWorkflowList" class="temporal-workflow-list" aria-live="polite"></div>
+            <div id="temporalDetail" class="temporal-detail" hidden></div>
           </div>
 
           <div id="enterpriseTabView" class="tab-view" hidden>

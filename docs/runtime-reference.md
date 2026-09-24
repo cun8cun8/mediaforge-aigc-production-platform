@@ -6,6 +6,23 @@ This directory contains the first executable vertical slice for MediaForge.
 It validates the narrowest path from a structured shot specification to
 generated media, a persisted job state, a quality probe, and a final MP4.
 
+## Temporal 编排运行时接口
+
+当 `MEDIAFORGE_TEMPORAL_ENABLED=true` 时，Studio 和 API 通过以下接口操作持久化工作流：
+
+| 接口 | 说明 |
+| --- | --- |
+| `GET /orchestration/temporal/status` | 返回 SDK、地址、命名空间、队列和 Worker 控制面配置状态，不暴露凭据。 |
+| `POST /orchestration/temporal/probe` | 仅验证 Temporal Server 连接，不提交媒体任务。 |
+| `GET /projects/{project_id}/orchestration/temporal` | 返回持久化的项目工作流索引；加 `?refresh=true` 会向 Temporal 查询至多 50 个最近记录。 |
+| `POST /projects/{project_id}/orchestration/temporal` | 提交 `generation`、`render`、`package` 或 `dispatch`；同一 `request_id` 安全复用已有 Workflow。 |
+| `GET /projects/{project_id}/orchestration/temporal/{workflow_id}` | 查询单个远端 Workflow 并更新项目侧状态索引。 |
+| `POST /projects/{project_id}/orchestration/temporal/{workflow_id}/cancel` | 请求取消；最终状态以随后的查询结果为准。 |
+
+Prometheus `/metrics` 同时提供 `mediaforge_temporal_configured`、
+`mediaforge_temporal_worker_control_plane_configured` 和按状态聚合的
+`mediaforge_temporal_workflows` 指标。
+
 ## Setup
 
 ```powershell

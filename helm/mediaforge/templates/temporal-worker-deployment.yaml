@@ -1,0 +1,96 @@
+{{- if .Values.temporal.enabled }}
+{{- include "mediaforge.validate" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mediaforge.fullname" . }}-temporal-worker
+  labels:
+    {{- include "mediaforge.labels" . | nindent 4 }}
+    app.kubernetes.io/component: temporal-worker
+spec:
+  replicas: {{ .Values.temporal.worker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mediaforge.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: temporal-worker
+  template:
+    metadata:
+      labels:
+        {{- include "mediaforge.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: temporal-worker
+        {{- with .Values.temporal.worker.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.temporal.worker.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "mediaforge.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.temporal.worker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.temporal.worker.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.temporal.worker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: temporal-worker
+          image: {{ include "mediaforge.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["mediaforge-temporal-worker"]
+          envFrom:
+            - configMapRef:
+                name: {{ include "mediaforge.runtimeConfigName" . }}
+            {{- with .Values.runtime.providerConfigMap.name }}
+            - configMapRef:
+                name: {{ . }}
+                optional: {{ $.Values.runtime.providerConfigMap.optional }}
+            {{- end }}
+          env:
+            - name: MEDIAFORGE_TEMPORAL_CONTROL_PLANE_URL
+              value: http://{{ include "mediaforge.fullname" . }}:{{ .Values.service.port }}
+            - name: MEDIAFORGE_TEMPORAL_CONTROL_PLANE_TOKEN_FILE
+              value: {{ printf "%s/%s" .Values.runtime.secretMountPath .Values.temporal.worker.controlPlaneTokenSecretKey | quote }}
+            {{- with .Values.temporal.worker.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          volumeMounts:
+            - name: runtime-secrets
+              mountPath: {{ .Values.runtime.secretMountPath }}
+              readOnly: true
+          startupProbe:
+            exec:
+              command: ["/bin/sh", "-ec", "mediaforge-temporal-worker --check"]
+            failureThreshold: 30
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["/bin/sh", "-ec", "kill -0 1"]
+            periodSeconds: 15
+          readinessProbe:
+            exec:
+              command: ["/bin/sh", "-ec", "mediaforge-temporal-worker --check"]
+            periodSeconds: 10
+            timeoutSeconds: 8
+          resources:
+            {{- toYaml .Values.temporal.worker.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.temporal.worker.containerSecurityContext | nindent 12 }}
+      volumes:
+        - name: runtime-secrets
+          secret:
+            secretName: {{ .Values.runtime.existingSecret }}
+            defaultMode: 256
+{{- end }}

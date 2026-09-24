@@ -13,6 +13,7 @@ from typing import Any, Mapping
 from .temporal_orchestration import (
     TemporalConfigurationError,
     TemporalOperationRequest,
+    TemporalOrchestrator,
     TemporalOrchestrationError,
     TemporalOrchestrationSettings,
 )
@@ -190,6 +191,22 @@ async def run_temporal_worker(settings: TemporalOrchestrationSettings) -> None:
     await worker.run()
 
 
+def check_temporal_worker(settings: TemporalOrchestrationSettings) -> dict[str, Any]:
+    """Perform the readiness checks used by the Worker deployment.
+
+    A readiness check deliberately validates both ends of the activity boundary:
+    Temporal must accept a client connection and the Worker must have a usable
+    control-plane endpoint. It does not submit a production operation.
+    """
+    temporal = TemporalOrchestrator(settings).probe()
+    control_plane = TemporalControlPlaneClient(settings)._request("GET", "/health")
+    return {
+        "ready": bool(temporal.get("connected")),
+        "temporal": temporal,
+        "control_plane": control_plane,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the MediaForge Temporal Worker")
     parser.add_argument("--address")
@@ -198,9 +215,20 @@ def main() -> None:
     parser.add_argument("--control-plane-url")
     parser.add_argument("--token-file")
     parser.add_argument("--tls", action="store_true")
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="verify Temporal and control-plane connectivity, then exit",
+    )
     args = parser.parse_args()
-    settings = build_worker_settings(args)
-    asyncio.run(run_temporal_worker(settings))
+    try:
+        settings = build_worker_settings(args)
+        if args.check:
+            print(json.dumps(check_temporal_worker(settings), ensure_ascii=True))
+            return
+        asyncio.run(run_temporal_worker(settings))
+    except (TemporalConfigurationError, TemporalOrchestrationError) as exc:
+        parser.exit(1, f"Temporal Worker failed: {exc}\n")
 
 
 if __name__ == "__main__":  # pragma: no cover
