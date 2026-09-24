@@ -40,6 +40,8 @@ $env:MEDIAFORGE_TEMPORAL_CONTROL_PLANE_URL = "http://127.0.0.1:8020"
 $env:MEDIAFORGE_TEMPORAL_WORKER_ID = "temporal-dev-1"
 $env:MEDIAFORGE_TEMPORAL_WORKER_HEARTBEAT_SECONDS = "20"
 $env:MEDIAFORGE_TEMPORAL_WORKER_STALE_AFTER_SECONDS = "75"
+$env:MEDIAFORGE_TEMPORAL_WORKER_REGISTRY_RETENTION_SECONDS = "604800"
+$env:MEDIAFORGE_TEMPORAL_WORKER_REGISTRY_MAX_PER_TENANT = "500"
 temporal server start-dev
 mediaforge-temporal-worker
 ```
@@ -69,6 +71,10 @@ Invoke-RestMethod `
   `mediaforge_temporal_worker_active_operations` 与
   `mediaforge_temporal_worker_oldest_heartbeat_seconds`。这些指标不带 Worker ID，避免
   因 Pod 更替产生高基数标签。
+- 当 `mediaforge_temporal_configured > 0` 但没有 `ONLINE` Worker 时，应在三分钟后
+  告警。Worker 登记按租户保留七天（可通过
+  `MEDIAFORGE_TEMPORAL_WORKER_REGISTRY_RETENTION_SECONDS` 调整），并由
+  `MEDIAFORGE_TEMPORAL_WORKER_REGISTRY_MAX_PER_TENANT` 限制总量。
 - Temporal Server/Cloud 的 TLS、命名空间、保留期、可用区和备份由部署侧负责。
 - 先在 staging 使用 `POST /orchestration/temporal/probe`、真实 Worker 和故障恢复演练，再切换生产流量。
 - 未启用 Temporal 时，原生 lease Worker 仍是完整可用的执行路径。

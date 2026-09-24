@@ -13,7 +13,7 @@ generated media, a persisted job state, a quality probe, and a final MP4.
 | 接口 | 说明 |
 | --- | --- |
 | `GET /orchestration/temporal/status` | 返回 SDK、地址、命名空间、队列和 Worker 控制面配置状态，不暴露凭据。 |
-| `GET /orchestration/temporal/workers` | 返回当前租户可见的 Temporal Worker 心跳、队列、版本、活动数和超时状态。 |
+| `GET /orchestration/temporal/workers` | 返回当前租户可见的 Temporal Worker 心跳、队列、版本、活动数、超时状态，以及注册表保留期和容量边界。 |
 | `POST /orchestration/temporal/workers/heartbeat` | 仅限租户绑定的 `orchestrator` 身份登记自己的 Worker 心跳。 |
 | `POST /orchestration/temporal/probe` | 仅验证 Temporal Server 连接，不提交媒体任务。 |
 | `GET /projects/{project_id}/orchestration/temporal` | 返回持久化的项目工作流索引；加 `?refresh=true` 会向 Temporal 查询至多 50 个最近记录。 |
@@ -23,7 +23,8 @@ generated media, a persisted job state, a quality probe, and a final MP4.
 
 Prometheus `/metrics` 同时提供 `mediaforge_temporal_configured`、
 `mediaforge_temporal_worker_control_plane_configured`、按状态聚合的
-`mediaforge_temporal_workflows`，以及 Worker 在线数、活动数和最旧心跳年龄指标。
+`mediaforge_temporal_workflows`，以及 Worker 在线数、活动数和最旧心跳年龄指标。Worker
+标签不会包含 Pod/Worker ID；过期登记由保留期自动清理，避免滚动发布长期扩大持久化状态。
 
 ## Setup
 

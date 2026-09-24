@@ -399,8 +399,9 @@ class MediaForgeService:
         self,
         *,
         tenant_id: str | None = None,
+        now: datetime | None = None,
     ) -> dict[str, Any]:
-        now = datetime.now(timezone.utc)
+        now = now or datetime.now(timezone.utc)
         stale_after_seconds = self.temporal.settings.worker_stale_after_seconds
         rows: list[dict[str, Any]] = []
         for record in self.temporal_workers.values():
@@ -432,6 +433,8 @@ class MediaForgeService:
             "generated_at": now.isoformat(),
             "heartbeat_interval_seconds": self.temporal.settings.worker_heartbeat_seconds,
             "stale_after_seconds": stale_after_seconds,
+            "registry_retention_seconds": self.temporal.settings.worker_registry_retention_seconds,
+            "registry_max_per_tenant": self.temporal.settings.worker_registry_max_per_tenant,
             "worker_count": len(rows),
             "online_count": online_count,
             "stale_count": len(rows) - online_count,
@@ -441,13 +444,35 @@ class MediaForgeService:
             "workers": rows,
         }
 
+    def _prune_temporal_workers_locked(self, *, now: datetime) -> int:
+        """Remove expired registry entries so rolling Worker identities cannot grow state forever."""
+        retention_seconds = self.temporal.settings.worker_registry_retention_seconds
+        expired_keys = [
+            key
+            for key, record in self.temporal_workers.items()
+            if (
+                (age := self._temporal_heartbeat_age_seconds(
+                    record.get("last_heartbeat_at"), now=now
+                )) is None
+                or age > retention_seconds
+            )
+        ]
+        for key in expired_keys:
+            self.temporal_workers.pop(key, None)
+        return len(expired_keys)
+
     def temporal_worker_status(
         self,
         *,
         tenant_id: str | None = None,
     ) -> dict[str, Any]:
         with self._state_lock:
-            return self._temporal_worker_status_locked(tenant_id=tenant_id)
+            now = datetime.now(timezone.utc)
+            pruned = self._prune_temporal_workers_locked(now=now)
+            report = self._temporal_worker_status_locked(tenant_id=tenant_id, now=now)
+            if pruned:
+                self._persist()
+            return report
 
     def temporal_worker_heartbeat(
         self,
@@ -482,9 +507,22 @@ class MediaForgeService:
             if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 1_000_000:
                 raise WorkflowError(f"{name} must be an integer between 0 and 1000000")
         with self._state_lock:
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(timezone.utc)
+            pruned = self._prune_temporal_workers_locked(now=now)
             key = self._temporal_worker_key(clean_tenant_id, clean_worker_id)
             existing = self.temporal_workers.get(key) or {}
+            if not existing:
+                tenant_worker_count = sum(
+                    record.get("tenant_id") == clean_tenant_id
+                    for record in self.temporal_workers.values()
+                )
+                if tenant_worker_count >= self.temporal.settings.worker_registry_max_per_tenant:
+                    if pruned:
+                        self._persist()
+                    raise WorkflowError(
+                        "Temporal Worker registry capacity has been reached for this tenant"
+                    )
+            now_iso = now.isoformat()
             self.temporal_workers[key] = {
                 "worker_id": clean_worker_id,
                 "tenant_id": clean_tenant_id,
@@ -492,12 +530,15 @@ class MediaForgeService:
                 "namespace": clean_namespace,
                 "version": clean_version,
                 **counters,
-                "registered_at": existing.get("registered_at") or now,
-                "last_heartbeat_at": now,
+                "registered_at": existing.get("registered_at") or now_iso,
+                "last_heartbeat_at": now_iso,
                 "heartbeat_count": int(existing.get("heartbeat_count") or 0) + 1,
             }
             self._persist()
-            report = self._temporal_worker_status_locked(tenant_id=clean_tenant_id)
+            report = self._temporal_worker_status_locked(
+                tenant_id=clean_tenant_id,
+                now=now,
+            )
             worker = next(
                 item
                 for item in report["workers"]

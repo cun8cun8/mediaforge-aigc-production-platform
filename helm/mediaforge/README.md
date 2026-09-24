@@ -94,8 +94,11 @@ paths and Worker heartbeat registration for its tenant. The Worker readiness
 probe checks Temporal and the active MediaForge control plane without submitting
 media work. Tune `temporal.workerHeartbeatSeconds` and
 `temporal.workerStaleAfterSeconds` together; the stale interval must be greater
-than the heartbeat interval. The Deployment uses the Kubernetes Pod name as its
-Worker ID and reports the chart application version with every heartbeat.
+than the heartbeat interval. `temporal.workerRegistryRetentionSeconds` controls
+how long stale Pod identities remain visible (seven days by default), while
+`temporal.workerRegistryMaxPerTenant` bounds durable registry growth. The
+Deployment uses the Kubernetes Pod name as its Worker ID and reports the chart
+application version with every heartbeat.
 
 ## Guardrails
 

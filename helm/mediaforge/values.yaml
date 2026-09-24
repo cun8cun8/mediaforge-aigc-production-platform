@@ -151,6 +151,8 @@ temporal:
   retryMaxAttempts: 3
   workerHeartbeatSeconds: 20
   workerStaleAfterSeconds: 75
+  workerRegistryRetentionSeconds: 604800
+  workerRegistryMaxPerTenant: 500
   worker:
     replicaCount: 1
     controlPlaneTokenSecretKey: temporal-worker-token

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 from contextlib import asynccontextmanager
@@ -904,6 +905,13 @@ def create_app(output_root: Path | None = None) -> FastAPI:
                     path=request.url.path,
                 )
             )
+            temporal_worker_heartbeat = (
+                principal.role == "orchestrator"
+                and auth_manager.is_temporal_worker_heartbeat(
+                    method=request.method,
+                    path=request.url.path,
+                )
+            )
             if worker_process:
                 worker_id = request.query_params.get("worker_id")
                 worker = service.workers.get(worker_id) if worker_id else None
@@ -941,7 +949,24 @@ def create_app(output_root: Path | None = None) -> FastAPI:
                 else f"subject:{principal.subject}" if principal.authenticated
                 else f"ip:{request.client.host if request.client else 'anonymous'}"
             )
-            rate_key = f"{rate_key}:{'read' if read_only_request else 'write'}"
+            if temporal_worker_heartbeat:
+                try:
+                    heartbeat_payload = await request.json()
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    heartbeat_payload = None
+                worker_id = (
+                    heartbeat_payload.get("worker_id", "").strip()
+                    if isinstance(heartbeat_payload, dict)
+                    and isinstance(heartbeat_payload.get("worker_id"), str)
+                    else ""
+                )
+                # A shared tenant Worker token is normal for a scaled Deployment.
+                # Scope its quota to a hashed Worker ID; registry capacity constrains
+                # fabricated IDs if that narrowly scoped credential is compromised.
+                fingerprint = hashlib.sha256(worker_id.encode("utf-8")).hexdigest()[:24]
+                rate_key = f"{rate_key}:temporal-heartbeat:{fingerprint}:write"
+            else:
+                rate_key = f"{rate_key}:{'read' if read_only_request else 'write'}"
             rate_limit = limiter.check(rate_key)
             if not rate_limit.allowed:
                 response = JSONResponse(

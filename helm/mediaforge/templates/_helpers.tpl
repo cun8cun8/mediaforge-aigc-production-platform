@@ -89,6 +89,12 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if and .Values.temporal.enabled (le (int .Values.temporal.workerStaleAfterSeconds) (int .Values.temporal.workerHeartbeatSeconds)) }}
 {{- fail "temporal.workerStaleAfterSeconds must exceed temporal.workerHeartbeatSeconds" }}
 {{- end }}
+{{- if and .Values.temporal.enabled (le (int .Values.temporal.workerRegistryRetentionSeconds) (int .Values.temporal.workerStaleAfterSeconds)) }}
+{{- fail "temporal.workerRegistryRetentionSeconds must exceed temporal.workerStaleAfterSeconds" }}
+{{- end }}
+{{- if and .Values.temporal.enabled (lt (int .Values.temporal.workerRegistryMaxPerTenant) 1) }}
+{{- fail "temporal.workerRegistryMaxPerTenant must be at least 1" }}
+{{- end }}
 {{- if and .Values.ingress.enabled (eq (len .Values.ingress.hosts) 0) }}
 {{- fail "ingress.enabled requires at least one ingress.hosts entry" }}
 {{- end }}

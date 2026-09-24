@@ -323,6 +323,8 @@ $env:MEDIAFORGE_TEMPORAL_TASK_QUEUE = "mediaforge-orchestration"
 $env:MEDIAFORGE_TEMPORAL_CONTROL_PLANE_URL = "http://127.0.0.1:8020"
 $env:MEDIAFORGE_TEMPORAL_WORKER_HEARTBEAT_SECONDS = "20"
 $env:MEDIAFORGE_TEMPORAL_WORKER_STALE_AFTER_SECONDS = "75"
+$env:MEDIAFORGE_TEMPORAL_WORKER_REGISTRY_RETENTION_SECONDS = "604800"
+$env:MEDIAFORGE_TEMPORAL_WORKER_REGISTRY_MAX_PER_TENANT = "500"
 ```
 
 Start a Temporal development server or connect to an approved Temporal Cloud
@@ -341,6 +343,12 @@ with the corresponding `POST .../cancel` endpoint. The Worker calls the
 existing authenticated MediaForge API, so configure
 `MEDIAFORGE_TEMPORAL_CONTROL_PLANE_TOKEN_FILE` whenever the API requires a
 bearer token.
+
+Worker records are tenant-scoped. Stale records remain available for operations
+diagnosis during `MEDIAFORGE_TEMPORAL_WORKER_REGISTRY_RETENTION_SECONDS` (seven
+days by default), then are removed on the next status read or heartbeat. The
+registry is bounded by `MEDIAFORGE_TEMPORAL_WORKER_REGISTRY_MAX_PER_TENANT` to
+prevent a compromised Worker credential from creating unbounded durable state.
 
 `GET /projects/{id}/orchestration/temporal` returns the durable project-side
 workflow index. Add `?refresh=true` to inspect known workflows at Temporal

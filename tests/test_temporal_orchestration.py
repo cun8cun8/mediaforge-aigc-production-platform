@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,7 +14,7 @@ from mediaforge_p1.auth import (
 )
 from mediaforge_p1.contracts import CreativeBrief
 from mediaforge_p1.delivery import DeliveryDispatcher
-from mediaforge_p1.service import MediaForgeService, ProjectRuntime
+from mediaforge_p1.service import MediaForgeService, ProjectRuntime, WorkflowError
 from mediaforge_p1.temporal_orchestration import (
     TemporalConfigurationError,
     TemporalOperationRequest,
@@ -48,6 +49,18 @@ def test_temporal_settings_reject_partial_mtls():
             enabled=True,
             tls=True,
             client_cert_file="client.crt",
+        ).validate()
+
+
+def test_temporal_worker_registry_settings_validate_retention_and_capacity():
+    with pytest.raises(TemporalConfigurationError, match="RETENTION"):
+        TemporalOrchestrationSettings(
+            worker_stale_after_seconds=75,
+            worker_registry_retention_seconds=75,
+        ).validate()
+    with pytest.raises(TemporalConfigurationError, match="MAX_PER_TENANT"):
+        TemporalOrchestrationSettings(
+            worker_registry_max_per_tenant=0,
         ).validate()
 
 
@@ -395,8 +408,42 @@ def test_temporal_worker_registry_is_tenant_isolated_persistent_and_observable(t
     reloaded = MediaForgeService(tmp_path)
     persisted = reloaded.temporal_worker_status(tenant_id="tenant_a")
     assert persisted["workers"][0]["worker_id"] == "temporal-1"
-    reloaded.temporal_workers["tenant_a:temporal-1"]["last_heartbeat_at"] = "2000-01-01T00:00:00+00:00"
+    reloaded.temporal_workers["tenant_a:temporal-1"]["last_heartbeat_at"] = (
+        datetime.now(timezone.utc)
+        - timedelta(seconds=reloaded.temporal.settings.worker_stale_after_seconds + 1)
+    ).isoformat()
     assert reloaded.temporal_worker_status(tenant_id="tenant_a")["stale_count"] == 1
+    reloaded.temporal_workers["tenant_a:temporal-1"]["last_heartbeat_at"] = "2000-01-01T00:00:00+00:00"
+    assert reloaded.temporal_worker_status(tenant_id="tenant_a")["worker_count"] == 0
+    assert MediaForgeService(tmp_path).temporal_worker_status(tenant_id="tenant_a")["worker_count"] == 0
+
+
+def test_temporal_worker_registry_caps_tenant_entries(tmp_path):
+    service = MediaForgeService(tmp_path)
+    service.temporal.settings = replace(
+        service.temporal.settings,
+        worker_registry_max_per_tenant=1,
+    )
+    service.temporal_worker_heartbeat(
+        "temporal-1",
+        tenant_id="tenant_a",
+        task_queue="mediaforge-orchestration",
+        namespace="default",
+    )
+    service.temporal_workers["tenant_a:expired"] = {
+        **service.temporal_workers["tenant_a:temporal-1"],
+        "worker_id": "expired",
+        "last_heartbeat_at": "2000-01-01T00:00:00+00:00",
+    }
+    service._persist()
+    with pytest.raises(WorkflowError, match="capacity"):
+        service.temporal_worker_heartbeat(
+            "temporal-2",
+            tenant_id="tenant_a",
+            task_queue="mediaforge-orchestration",
+            namespace="default",
+        )
+    assert "tenant_a:expired" not in MediaForgeService(tmp_path).temporal_workers
 
 
 def test_temporal_worker_heartbeat_api_requires_orchestrator_and_preserves_tenant(tmp_path, monkeypatch):
@@ -439,6 +486,42 @@ def test_temporal_worker_heartbeat_api_requires_orchestrator_and_preserves_tenan
     assert worker_read.status_code == 403
     assert admin_read.status_code == 200
     assert admin_read.json()["workers"][0]["worker_id"] == "temporal-api-1"
+
+
+def test_temporal_worker_heartbeats_are_rate_limited_per_worker(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEDIAFORGE_AUTH_MODE", "required")
+    monkeypatch.setenv("MEDIAFORGE_RATE_LIMIT_ENABLED", "true")
+    monkeypatch.setenv("MEDIAFORGE_RATE_LIMIT_REQUESTS", "1")
+    monkeypatch.setenv(
+        "MEDIAFORGE_API_KEYS",
+        '{"temporal":{"subject":"temporal-worker","role":"orchestrator","tenant_id":"tenant_a"}}',
+    )
+    app = create_app(output_root=tmp_path)
+    payload = {
+        "worker_id": "temporal-api-1",
+        "task_queue": "mediaforge-orchestration",
+        "namespace": "default",
+    }
+    with TestClient(app) as client:
+        first = client.post(
+            "/orchestration/temporal/workers/heartbeat",
+            json=payload,
+            headers={"Authorization": "Bearer temporal"},
+        )
+        second = client.post(
+            "/orchestration/temporal/workers/heartbeat",
+            json={**payload, "worker_id": "temporal-api-2"},
+            headers={"Authorization": "Bearer temporal"},
+        )
+        repeated = client.post(
+            "/orchestration/temporal/workers/heartbeat",
+            json=payload,
+            headers={"Authorization": "Bearer temporal"},
+        )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert repeated.status_code == 429
 
 
 def test_orchestrator_identity_is_tenant_bound_and_activity_limited(monkeypatch):

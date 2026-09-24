@@ -103,6 +103,8 @@ class TemporalOrchestrationSettings:
     retry_max_attempts: int = 3
     worker_heartbeat_seconds: int = 20
     worker_stale_after_seconds: int = 75
+    worker_registry_retention_seconds: int = 604800
+    worker_registry_max_per_tenant: int = 500
 
     @classmethod
     def from_env(cls) -> "TemporalOrchestrationSettings":
@@ -150,6 +152,18 @@ class TemporalOrchestrationSettings:
                 minimum=15,
                 maximum=1800,
             ),
+            worker_registry_retention_seconds=_env_int(
+                "MEDIAFORGE_TEMPORAL_WORKER_REGISTRY_RETENTION_SECONDS",
+                604800,
+                minimum=3600,
+                maximum=7776000,
+            ),
+            worker_registry_max_per_tenant=_env_int(
+                "MEDIAFORGE_TEMPORAL_WORKER_REGISTRY_MAX_PER_TENANT",
+                500,
+                minimum=1,
+                maximum=10000,
+            ),
         )
         settings.validate()
         return settings
@@ -185,6 +199,18 @@ class TemporalOrchestrationSettings:
         if self.worker_stale_after_seconds <= self.worker_heartbeat_seconds:
             raise TemporalConfigurationError(
                 "MEDIAFORGE_TEMPORAL_WORKER_STALE_AFTER_SECONDS must exceed the heartbeat interval"
+            )
+        if not 3600 <= self.worker_registry_retention_seconds <= 7776000:
+            raise TemporalConfigurationError(
+                "MEDIAFORGE_TEMPORAL_WORKER_REGISTRY_RETENTION_SECONDS must be between 3600 and 7776000"
+            )
+        if self.worker_registry_retention_seconds <= self.worker_stale_after_seconds:
+            raise TemporalConfigurationError(
+                "MEDIAFORGE_TEMPORAL_WORKER_REGISTRY_RETENTION_SECONDS must exceed the stale threshold"
+            )
+        if not 1 <= self.worker_registry_max_per_tenant <= 10000:
+            raise TemporalConfigurationError(
+                "MEDIAFORGE_TEMPORAL_WORKER_REGISTRY_MAX_PER_TENANT must be between 1 and 10000"
             )
 
     def tls_config(self) -> Any:
@@ -300,6 +326,8 @@ class TemporalOrchestrator:
             "tls": self.settings.tls,
             "worker_heartbeat_seconds": self.settings.worker_heartbeat_seconds,
             "worker_stale_after_seconds": self.settings.worker_stale_after_seconds,
+            "worker_registry_retention_seconds": self.settings.worker_registry_retention_seconds,
+            "worker_registry_max_per_tenant": self.settings.worker_registry_max_per_tenant,
             "control_plane_url_configured": bool(self.settings.control_plane_url),
             "control_plane_token_configured": bool(self.settings.control_plane_token_file),
             "worker_connection_configured": bool(self.settings.control_plane_url),

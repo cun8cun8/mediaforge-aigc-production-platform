@@ -28,6 +28,24 @@ groups:
           summary: MediaForge reports sustained operations warnings.
           runbook: Inspect queue capacity, spend, and Worker heartbeats.
 
+      - alert: MediaForgeTemporalNoOnlineWorker
+        expr: mediaforge_temporal_configured > 0 and sum(mediaforge_temporal_workers{status="ONLINE"}) < 1
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: Temporal orchestration is enabled without an online MediaForge Worker.
+          runbook: Inspect the Temporal Worker Deployment, control-plane token, queue, and heartbeat endpoint.
+
+      - alert: MediaForgeTemporalWorkerStale
+        expr: sum(mediaforge_temporal_workers{status="STALE"}) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: One or more registered MediaForge Temporal Workers remain stale.
+          runbook: Inspect Worker logs, Kubernetes Pod lifecycle, and the control-plane heartbeat report.
+
   - name: mediaforge-reliability
     rules:
       - alert: MediaForgeHttp5xxRateHigh
