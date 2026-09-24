@@ -267,6 +267,7 @@ Browser SSO additionally needs authorization code + PKCE endpoints and a public 
 | Concern | Essential setting | Operational check |
 | --- | --- | --- |
 | Metrics | `MEDIAFORGE_METRICS_AUTH_MODE=token` and token file | `/metrics`, Prometheus scrape |
+| LLM observability | `MEDIAFORGE_LANGFUSE_*` key files | `/observability/langfuse/status`, Langfuse traces |
 | Alerting | `MEDIAFORGE_ALERT_*` thresholds | `/ops/alerts`, Grafana dashboard |
 | Asset rights | `MEDIAFORGE_REQUIRE_ASSET_RIGHTS_RECORD=true` | Project compliance report blocks unregistered asset |
 | Workflow rights | `MEDIAFORGE_LICENSE_REGISTRY_PATH` or registry sync | License registry validation |
@@ -275,6 +276,33 @@ Browser SSO additionally needs authorization code + PKCE endpoints and a public 
 | Delivery | `MEDIAFORGE_DELIVERY_MODE` and optional secret | Dispatch receipt and delivery package verification |
 
 The Prometheus, Alertmanager and Grafana overlay is `docker-compose.observability.yml`. Keep monitoring tokens in `ops/secrets/` or a proper secret store, never in a Compose file or GitHub Actions log.
+
+### Optional Langfuse LLM Observability
+
+MediaForge can export Provider generations and project evaluation outcomes to a
+self-hosted Langfuse deployment or Langfuse Cloud. This is an optional,
+best-effort adapter: the native audit chain, delivery evidence and Prometheus
+metrics remain authoritative when Langfuse is unavailable.
+
+Install the optional dependency, then provide keys through files rather than
+environment variables:
+
+```powershell
+pip install -e ".[observability]"
+$env:MEDIAFORGE_LANGFUSE_ENABLED = "true"
+$env:MEDIAFORGE_LANGFUSE_PUBLIC_KEY_FILE = "D:\secure-config\langfuse-public-key"
+$env:MEDIAFORGE_LANGFUSE_SECRET_KEY_FILE = "D:\secure-config\langfuse-secret-key"
+$env:MEDIAFORGE_LANGFUSE_BASE_URL = "https://cloud.langfuse.com"
+$env:MEDIAFORGE_LANGFUSE_ENVIRONMENT = "staging"
+$env:MEDIAFORGE_LANGFUSE_SAMPLE_RATE = "0.2"
+```
+
+By default, the export contains Provider, model capability, prompt-version and
+spec fingerprints, cost, duration, artifact hash and evaluation result. It does
+not export prompt text, source material, local file paths or generated media.
+Set `MEDIAFORGE_LANGFUSE_INCLUDE_PROMPT_CONTENT=true` only after a documented
+data-export review. Check `/observability/langfuse/status`; its response never
+contains either credential.
 
 ## Configuration Validation
 

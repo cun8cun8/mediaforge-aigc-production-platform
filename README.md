@@ -28,6 +28,7 @@ MediaForge 以这些问题为第一等能力，提供：
 | 创意到分镜 | 原著导入、故事事件、Story Bible、剧本场次、可恢复规划、镜头卡 |
 | 生产编排 | 六阶段门禁、阶段锁定、返工影响分析、任务队列、Worker 租约与失败恢复 |
 | 生成接入 | Mock、ComfyUI 图像、Replicate 图生视频、本地 GPU 命令适配器、能力路由与故障切换 |
+| AI 可观测性 | 本地审计与追踪、Prometheus 指标、可选 Langfuse v4 Provider/评测观测，默认脱敏外发 |
 | 后期与资产 | 参考图、资产哈希、字幕与对白、音频、口型同步适配器、FFmpeg 导出与交付 ZIP |
 | 治理 | 审批、审计、质量评估、模型准入、交付反馈闭环、成本台账、许可证台账、来源链路、连续性和合规报告 |
 | 企业运行 | OIDC、租户隔离、PostgreSQL、Redis、S3/MinIO、GPU Worker、指标与告警 |
@@ -248,6 +249,7 @@ GitHub Actions 会运行 Python 回归、浏览器验收、Compose/Kubernetes �
 - [贡献指南](CONTRIBUTING.md)：开发环境、分支、测试、提交与 PR 标准。
 - [安全策略](SECURITY.md)：漏洞报告方式、支持范围和 Secret 处理规则。
 - [发布清单](docs/release-checklist.md)：从代码合并到生产发布的责任边界。
+- [开源采用记录](docs/open-source-adoption.md)：已接入和候选开源组件的边界与准入原则。
 
 本仓库当前未附带对外授权的 `LICENSE` 文件。除非仓库所有者另行发布许可证，代码仅供受邀协作者在项目约定范围内使用；在公开发布、再分发或接入第三方模型权重前，应完成独立的许可证与内容权利审查。
 

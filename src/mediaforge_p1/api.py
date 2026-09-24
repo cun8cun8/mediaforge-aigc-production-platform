@@ -651,6 +651,7 @@ async def app_lifespan(app: FastAPI):
             except asyncio.CancelledError:
                 pass
         app.state.mediaforge.release_control_plane()
+        app.state.mediaforge.langfuse.flush()
 
 
 def create_app(output_root: Path | None = None) -> FastAPI:
@@ -1011,6 +1012,10 @@ def create_app(output_root: Path | None = None) -> FastAPI:
     @app.get("/metrics/runtime")
     def runtime_metrics() -> dict[str, Any]:
         return service.runtime_metrics_view()
+
+    @app.get("/observability/langfuse/status")
+    def langfuse_status() -> dict[str, Any]:
+        return service.langfuse_status()
 
     @app.get("/ops/alerts")
     def operations_alerts() -> dict[str, Any]:

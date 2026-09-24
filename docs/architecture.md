@@ -142,6 +142,7 @@ For a local GPU cluster, the API may publish work to the queue while a Worker ru
 | Delivery archive | Local filesystem | S3/MinIO | Verified, versionable delivery artifact storage |
 | Identity | Disabled or API key | OIDC + PKCE | Organization claims, browser SSO and tenant mapping |
 | Metrics | `/metrics` | Prometheus + Alertmanager + Grafana | Deployment-owned monitoring and alert routing |
+| LLM observability | Optional Langfuse SDK | Provider generation and evaluation spans | Redacted by default; native audit remains authoritative |
 
 Redis is not the source of truth for production jobs; durable project state and leases remain authoritative. Likewise, S3/MinIO archives delivery packages while active media production still needs a writable working location visible to the API and Workers.
 

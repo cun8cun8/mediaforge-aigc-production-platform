@@ -76,6 +76,7 @@ from .webhooks import WebhookDispatcher
 from .audit_integrity import event_hash as audit_event_hash, verify_event_chain
 from .audit_anchor import AuditAnchorError, AuditAnchorStore
 from .observability import RuntimeMetrics
+from .langfuse_observability import LangfuseObservability
 from .alerts import (
     OperationsAlertSettings,
     evaluate_operations_alerts,
@@ -277,6 +278,7 @@ class MediaForgeService:
         self.siem = WebhookDispatcher.from_siem_env()
         self.siem.configure_outbox(self.output_root / "siem-outbox.json")
         self.runtime_metrics = RuntimeMetrics()
+        self.langfuse = LangfuseObservability.from_env()
         self.operations_alert_settings = OperationsAlertSettings.from_env()
         self._production_readiness_cache: dict[str, Any] | None = None
         self.delivery_dispatcher = DeliveryDispatcher.from_env(self.output_root)
@@ -356,6 +358,9 @@ class MediaForgeService:
 
     def runtime_metrics_view(self) -> dict[str, Any]:
         return self.runtime_metrics.snapshot()
+
+    def langfuse_status(self) -> dict[str, Any]:
+        return self.langfuse.status_view()
 
     def delivery_dispatch_status(self) -> dict[str, Any]:
         return self.delivery_dispatcher.status_view()
@@ -708,6 +713,7 @@ class MediaForgeService:
             acquire=self.enterprise.control_plane.enabled
         )
         content_credentials = self.content_credentials_status()
+        langfuse = self.langfuse_status()
         content_credentials_required = self.release_content_credentials_required()
         enterprise_ready = (
             bool(enterprise["identity"]["production_ready"])
@@ -843,6 +849,20 @@ class MediaForgeService:
                 "message": "Runtime metrics endpoint is available.",
             },
             {
+                "code": "llm_observability",
+                "passed": (not bool(langfuse.get("enabled"))) or bool(langfuse.get("client_ready")),
+                "blocking": False,
+                "message": (
+                    "Langfuse generation and evaluation tracing is enabled."
+                    if bool(langfuse.get("enabled")) and bool(langfuse.get("client_ready"))
+                    else (
+                        "Langfuse is disabled; local audit, trace and metrics remain active."
+                        if not bool(langfuse.get("enabled"))
+                        else "Langfuse is enabled but its client is unavailable."
+                    )
+                ),
+            },
+            {
                 "code": "enterprise_runtime",
                 "passed": enterprise_ready,
                 "blocking": False,
@@ -888,6 +908,8 @@ class MediaForgeService:
             next_actions.append(
                 "Configure and independently verify trusted C2PA credentials before production release."
             )
+        if bool(langfuse.get("enabled")) and not bool(langfuse.get("client_ready")):
+            next_actions.append("Install the Langfuse SDK and verify the configured Langfuse credentials.")
         production_gaps = [
             {
                 "code": check["code"],
@@ -916,6 +938,7 @@ class MediaForgeService:
             "quality_evaluator": self.quality_evaluation_status(),
             "webhooks": webhook,
             "runtime_metrics": self.runtime_metrics_view(),
+            "langfuse": langfuse,
             "enterprise": enterprise,
             "control_plane": control_plane,
         }
@@ -13339,6 +13362,14 @@ class MediaForgeService:
                 ],
             },
         )
+        self.langfuse.record_evaluation(
+            project_id=project_id,
+            trace_id=project.trace_id,
+            evaluation_id=report["evaluation_id"],
+            score=float(report["score"]),
+            passed=bool(report["passed"]),
+            prompt_versions=self._active_prompt_snapshots(project),
+        )
         path.write_text(
             json.dumps(report, ensure_ascii=True, indent=2),
             encoding="utf-8",
@@ -15835,30 +15866,51 @@ class MediaForgeService:
     ) -> Artifact:
         started = perf_counter()
         outcome = 'failed'
-        try:
-            artifact = provider.generate(
-                spec,
-                job_id=job_id,
-                output_dir=output_dir,
-            )
-            outcome = 'succeeded'
-            self.enterprise.billing.record(
-                event_id=f"generation:{job_id}:{self.jobs.get(job_id).attempts}",
-                tenant_id=str(tenant_id or "default"),
-                project_id=project_id,
-                category="provider_generation",
-                quantity=1,
-                unit_price=max(float(estimated_cost), 0.0),
-                metadata={"provider": provider.name, "artifact_id": artifact.artifact_id, "cost_basis": "estimate"},
-            )
-            return artifact
-        finally:
-            self.runtime_metrics.observe_provider(
-                provider=provider.name,
-                outcome=outcome,
-                duration=perf_counter() - started,
-                estimated_cost=estimated_cost,
-            )
+        project = self.projects.get(project_id or "")
+        prompt_versions = (
+            self._active_prompt_snapshots(project)
+            if project is not None
+            else []
+        )
+        with self.langfuse.provider_generation(
+            project_id=project_id,
+            trace_id=project.trace_id if project is not None else None,
+            job_id=job_id,
+            provider=provider.name,
+            capability=spec.provider_constraints.capability.value,
+            estimated_cost=estimated_cost,
+            prompt_versions=prompt_versions,
+            spec=spec,
+        ) as observation:
+            try:
+                artifact = provider.generate(
+                    spec,
+                    job_id=job_id,
+                    output_dir=output_dir,
+                )
+                observation.succeed(
+                    artifact_id=artifact.artifact_id,
+                    artifact_sha256=artifact.sha256,
+                    kind=artifact.kind,
+                )
+                outcome = 'succeeded'
+                self.enterprise.billing.record(
+                    event_id=f"generation:{job_id}:{self.jobs.get(job_id).attempts}",
+                    tenant_id=str(tenant_id or "default"),
+                    project_id=project_id,
+                    category="provider_generation",
+                    quantity=1,
+                    unit_price=max(float(estimated_cost), 0.0),
+                    metadata={"provider": provider.name, "artifact_id": artifact.artifact_id, "cost_basis": "estimate"},
+                )
+                return artifact
+            finally:
+                self.runtime_metrics.observe_provider(
+                    provider=provider.name,
+                    outcome=outcome,
+                    duration=perf_counter() - started,
+                    estimated_cost=estimated_cost,
+                )
 
     def _record_event(
         self,

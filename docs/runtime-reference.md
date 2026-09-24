@@ -137,6 +137,7 @@ GET  /tenants/me/cost/export?format=json|csv&include_archived=
 GET  /tenants/quota/status
 GET  /metrics
 GET  /metrics/runtime
+GET  /observability/langfuse/status
 GET  /delivery/status
 GET  /quality/status
 GET  /speech/status
