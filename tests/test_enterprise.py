@@ -552,6 +552,52 @@ def test_worker_registration_heartbeat_and_listing_are_tenant_scoped(tmp_path, m
         assert client.app.state.mediaforge.workers["owned-worker"]["tenant_id"] == "tenant_a"
 
 
+def test_native_worker_control_limits_are_scoped_per_worker_and_registry_is_pruned(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("MEDIAFORGE_AUTH_MODE", "required")
+    monkeypatch.setenv("MEDIAFORGE_RATE_LIMIT_REQUESTS", "1")
+    monkeypatch.setenv(
+        "MEDIAFORGE_API_KEYS",
+        json.dumps({
+            "worker-token": {
+                "subject": "worker-controller",
+                "role": "provider",
+                "tenant_id": "tenant_a",
+            }
+        }),
+    )
+    with TestClient(create_app(output_root=tmp_path)) as client:
+        headers = {"Authorization": "Bearer worker-token"}
+        assert client.post(
+            "/workers/register",
+            json={"worker_id": "worker-a"},
+            headers=headers,
+        ).status_code == 200
+        assert client.post(
+            "/workers/register",
+            json={"worker_id": "worker-b"},
+            headers=headers,
+        ).status_code == 200
+        assert client.post(
+            "/workers/register",
+            json={"worker_id": "worker-a"},
+            headers=headers,
+        ).status_code == 429
+
+        service = client.app.state.mediaforge
+        service.workers["expired-worker"] = {
+            **service.workers["worker-a"],
+            "worker_id": "expired-worker",
+            "last_heartbeat_at": "2000-01-01T00:00:00+00:00",
+        }
+        service._persist()
+        assert client.get("/workers", headers=headers).json()["worker_count"] == 2
+        assert "expired-worker" not in service.workers
+        assert "expired-worker" not in MediaForgeService(tmp_path).workers
+
+
 def test_provider_process_requires_its_worker_and_valid_lease(tmp_path, monkeypatch):
     monkeypatch.setenv("MEDIAFORGE_AUTH_MODE", "required")
     monkeypatch.setenv("MEDIAFORGE_API_KEYS", json.dumps({"provider": {"subject": "worker", "role": "provider", "tenant_id": "tenant_a"}}))

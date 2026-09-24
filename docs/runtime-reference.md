@@ -582,6 +582,11 @@ GPU 遥测，CLI 自动上报 `nvidia-smi` 的型号、驱动、总显存、空�
 Worker 本机独立 GPU 推理。资产清单中的生成资产、
 参考资产和最终输出均可通过资产 ID 下载，下载网关会校验项目归属、artifact root 和哈希。
 
+原生 Worker 的控制请求按 Worker 标识和操作类型独立限流，允许扩容副本共享租户凭据而不
+相互耗尽配额。过期登记保留 `MEDIAFORGE_WORKER_REGISTRY_RETENTION_SECONDS`（默认七天），
+并受 `MEDIAFORGE_WORKER_REGISTRY_MAX_PER_TENANT` 限制；持有 `ADMITTED` 或 `RUNNING`
+租约的 Worker 不会被自动回收。
+
 Run a live API smoke flow:
 
 ```powershell

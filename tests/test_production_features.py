@@ -387,8 +387,15 @@ def test_new_api_validation_and_worker_health(tmp_path):
     service.register_worker("live", resources={"cpu_count": 4})
     service.register_worker("stale")
     service.workers["stale"]["last_heartbeat_at"] = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    service.create_project(brief("worker_lease_retention"))
+    plan = service.generate_plan("worker_lease_retention")
+    service.enqueue_shot("worker_lease_retention", plan["shots"][0]["shot"]["shot_id"])
+    service.register_worker("lease-owner")
+    assert service.claim_worker_jobs("lease-owner")["claimed_count"] == 1
+    service.workers["lease-owner"]["last_heartbeat_at"] = "2000-01-01T00:00:00+00:00"
     status = service.worker_status()
-    assert status["worker_count"] == 2 and status["online_count"] == 1 and status["stale_count"] == 1
+    assert status["worker_count"] == 3 and status["online_count"] == 1 and status["stale_count"] == 2
+    assert any(item["worker_id"] == "lease-owner" for item in status["workers"])
     assert status["execution_mode"] == "api-provider-dispatch"
 
 

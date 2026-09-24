@@ -59,10 +59,20 @@ class JobLeasePolicy:
     """Controls when an interrupted provider execution may be recovered."""
 
     stale_after_seconds: float = 900.0
+    worker_registry_retention_seconds: float = 604800.0
+    worker_registry_max_per_tenant: int = 500
 
     def __post_init__(self) -> None:
         if self.stale_after_seconds <= 0:
             raise ValueError("job lease stale_after_seconds must be > 0")
+        if not 3600 <= self.worker_registry_retention_seconds <= 7776000:
+            raise ValueError(
+                "worker registry retention must be between 3600 and 7776000 seconds"
+            )
+        if self.worker_registry_retention_seconds <= self.stale_after_seconds:
+            raise ValueError("worker registry retention must exceed the job lease")
+        if not 1 <= self.worker_registry_max_per_tenant <= 10000:
+            raise ValueError("worker registry max per tenant must be between 1 and 10000")
 
     @classmethod
     def from_env(cls) -> "JobLeasePolicy":
@@ -73,7 +83,25 @@ class JobLeasePolicy:
             raise ValueError(
                 "MEDIAFORGE_JOB_LEASE_SECONDS must be a number"
             ) from exc
-        return cls(stale_after_seconds=value)
+        try:
+            retention = float(
+                os.getenv(
+                    "MEDIAFORGE_WORKER_REGISTRY_RETENTION_SECONDS",
+                    "604800",
+                ).strip()
+            )
+            max_per_tenant = int(
+                os.getenv("MEDIAFORGE_WORKER_REGISTRY_MAX_PER_TENANT", "500").strip()
+            )
+        except ValueError as exc:
+            raise ValueError(
+                "worker registry settings must be numeric"
+            ) from exc
+        return cls(
+            stale_after_seconds=value,
+            worker_registry_retention_seconds=retention,
+            worker_registry_max_per_tenant=max_per_tenant,
+        )
 
 
 ALLOWED_TRANSITIONS: dict[JobStatus, set[JobStatus]] = {

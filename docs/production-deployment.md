@@ -749,6 +749,10 @@ Worker 启动后先调用 `POST /workers/register`，定期调用心跳接口维
 `POST /jobs/recover-stale` 回收失联 Worker 的任务。
 Worker 注册时可声明 `capabilities` 和 `resources`，领取接口会优先匹配生成能力。
 工作台显示在线/超时状态、心跳年龄、主机、系统、CPU、并发、活动任务和 GPU 遥测；CLI 自动
+按 Worker 和操作类型隔离控制面限流，避免多副本共享租户凭据时互相触发 `429`。Worker
+登记默认保留七天，配置 `MEDIAFORGE_WORKER_REGISTRY_RETENTION_SECONDS` 和
+`MEDIAFORGE_WORKER_REGISTRY_MAX_PER_TENANT` 可调整保留期与容量；清理逻辑会跳过仍持有
+`ADMITTED/RUNNING` 租约的 Worker，防止误删正在执行的任务。
 通过 `nvidia-smi` 上报 GPU 型号、驱动、总显存、空闲显存和利用率。领取接口的
 `minimum_gpu_memory_mib` 会在领取前执行显存准入并返回结构化 admission 结果。目前
 `execution_mode=api-provider-dispatch` 仍表示 Worker 通过 API 调用 Provider，GPU 遥测和

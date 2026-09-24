@@ -949,22 +949,47 @@ def create_app(output_root: Path | None = None) -> FastAPI:
                 else f"subject:{principal.subject}" if principal.authenticated
                 else f"ip:{request.client.host if request.client else 'anonymous'}"
             )
+            scoped_worker_id = ""
+            scoped_worker_operation = ""
             if temporal_worker_heartbeat:
                 try:
                     heartbeat_payload = await request.json()
                 except (json.JSONDecodeError, UnicodeDecodeError):
                     heartbeat_payload = None
-                worker_id = (
+                scoped_worker_id = (
                     heartbeat_payload.get("worker_id", "").strip()
                     if isinstance(heartbeat_payload, dict)
                     and isinstance(heartbeat_payload.get("worker_id"), str)
                     else ""
                 )
+                scoped_worker_operation = "temporal-heartbeat"
+            else:
+                worker_path_parts = request.url.path.strip("/").split("/")
+                if request.method.upper() == "POST" and worker_path_parts[:1] == ["workers"]:
+                    if worker_path_parts == ["workers", "register"]:
+                        try:
+                            worker_payload = await request.json()
+                        except (json.JSONDecodeError, UnicodeDecodeError):
+                            worker_payload = None
+                        scoped_worker_id = (
+                            worker_payload.get("worker_id", "").strip()
+                            if isinstance(worker_payload, dict)
+                            and isinstance(worker_payload.get("worker_id"), str)
+                            else ""
+                        )
+                        scoped_worker_operation = "register"
+                    elif len(worker_path_parts) == 3 and worker_path_parts[2] in {"heartbeat", "claim"}:
+                        scoped_worker_id = worker_path_parts[1]
+                        scoped_worker_operation = worker_path_parts[2]
+                elif worker_process:
+                    scoped_worker_id = request.query_params.get("worker_id", "").strip()
+                    scoped_worker_operation = "process"
+            if scoped_worker_operation:
                 # A shared tenant Worker token is normal for a scaled Deployment.
-                # Scope its quota to a hashed Worker ID; registry capacity constrains
-                # fabricated IDs if that narrowly scoped credential is compromised.
-                fingerprint = hashlib.sha256(worker_id.encode("utf-8")).hexdigest()[:24]
-                rate_key = f"{rate_key}:temporal-heartbeat:{fingerprint}:write"
+                # Scope each control operation to a hashed Worker ID; registry
+                # capacity constrains fabricated IDs if a Worker token leaks.
+                fingerprint = hashlib.sha256(scoped_worker_id.encode("utf-8")).hexdigest()[:24]
+                rate_key = f"{rate_key}:worker:{scoped_worker_operation}:{fingerprint}:write"
             else:
                 rate_key = f"{rate_key}:{'read' if read_only_request else 'write'}"
             rate_limit = limiter.check(rate_key)

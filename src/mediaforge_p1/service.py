@@ -1484,31 +1484,68 @@ class MediaForgeService:
         self._production_readiness_cache = copy.deepcopy(report)
         return report
 
-    def worker_status(self, *, tenant_id: str | None = None) -> dict[str, Any]:
-        now = datetime.now(timezone.utc)
+    def _worker_heartbeat_age_seconds(
+        self,
+        heartbeat: Any,
+        *,
+        now: datetime,
+    ) -> float | None:
+        if not heartbeat:
+            return None
+        try:
+            heartbeat_at = datetime.fromisoformat(str(heartbeat).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if heartbeat_at.tzinfo is None:
+            heartbeat_at = heartbeat_at.replace(tzinfo=timezone.utc)
+        return round(max((now - heartbeat_at).total_seconds(), 0.0), 3)
+
+    def _prune_workers_locked(self, *, now: datetime) -> int:
+        """Retain stale Worker history without deleting records that still own leases."""
+        active_worker_ids = {
+            job.worker_id
+            for job in self.jobs.all()
+            if job.worker_id
+            and job.status in {JobStatus.ADMITTED, JobStatus.RUNNING}
+        }
+        retention_seconds = self.job_lease_policy.worker_registry_retention_seconds
+        expired_ids = [
+            worker_id
+            for worker_id, worker in self.workers.items()
+            if worker_id not in active_worker_ids
+            and (
+                (age := self._worker_heartbeat_age_seconds(
+                    worker.get("last_heartbeat_at"), now=now
+                )) is None
+                or age > retention_seconds
+            )
+        ]
+        for worker_id in expired_ids:
+            self.workers.pop(worker_id, None)
+        return len(expired_ids)
+
+    def _worker_status_locked(
+        self,
+        *,
+        tenant_id: str | None = None,
+        now: datetime,
+    ) -> dict[str, Any]:
         rows = []
         for worker_id, worker in sorted(self.workers.items()):
             if tenant_id is not None and worker.get("tenant_id") != tenant_id:
                 continue
             item = copy.deepcopy(worker)
-            heartbeat = item.get("last_heartbeat_at")
-            if heartbeat:
-                try:
-                    heartbeat_at = datetime.fromisoformat(str(heartbeat))
-                    if heartbeat_at.tzinfo is None:
-                        heartbeat_at = heartbeat_at.replace(tzinfo=timezone.utc)
-                    item["heartbeat_age_seconds"] = round(
-                        max((now - heartbeat_at).total_seconds(), 0.0),
-                        3,
-                    )
-                except ValueError:
-                    item["heartbeat_age_seconds"] = None
-                if (
-                    item.get("status") == "ONLINE"
-                    and item.get("heartbeat_age_seconds") is not None
-                    and item["heartbeat_age_seconds"] > self.job_lease_policy.stale_after_seconds
-                ):
-                    item["status"] = "STALE"
+            item["heartbeat_age_seconds"] = self._worker_heartbeat_age_seconds(
+                item.get("last_heartbeat_at"), now=now
+            )
+            if (
+                item.get("status") == "ONLINE"
+                and (
+                    item.get("heartbeat_age_seconds") is None
+                    or item["heartbeat_age_seconds"] > self.job_lease_policy.stale_after_seconds
+                )
+            ):
+                item["status"] = "STALE"
             item["gpu"] = self._worker_gpu_summary(item.get("resources") or {})
             item["active_job_ids"] = [
                 job.job_id
@@ -1528,6 +1565,8 @@ class MediaForgeService:
             "schema_version": "mediaforge-worker-control-v1",
             "generated_at": now.isoformat(),
             "lease_seconds": self.job_lease_policy.stale_after_seconds,
+            "registry_retention_seconds": self.job_lease_policy.worker_registry_retention_seconds,
+            "registry_max_per_tenant": self.job_lease_policy.worker_registry_max_per_tenant,
             "worker_count": len(rows),
             "online_count": sum(row.get("status") == "ONLINE" for row in rows),
             "stale_count": sum(row.get("status") == "STALE" for row in rows),
@@ -1541,6 +1580,15 @@ class MediaForgeService:
             "workers": rows,
             "active_leases": active_leases,
         }
+
+    def worker_status(self, *, tenant_id: str | None = None) -> dict[str, Any]:
+        with self._state_lock:
+            now = datetime.now(timezone.utc)
+            pruned = self._prune_workers_locked(now=now)
+            report = self._worker_status_locked(tenant_id=tenant_id, now=now)
+            if pruned:
+                self._persist()
+            return report
 
     @staticmethod
     def _worker_gpu_summary(resources: dict[str, Any]) -> dict[str, Any]:
@@ -1646,10 +1694,23 @@ class MediaForgeService:
         clean_id = self._clean_worker_id(worker_id)
         if concurrency < 1 or concurrency > 64:
             raise WorkflowError("worker concurrency must be between 1 and 64")
-        now = datetime.now(timezone.utc).isoformat()
+        now_dt = datetime.now(timezone.utc)
+        pruned = self._prune_workers_locked(now=now_dt)
+        now = now_dt.isoformat()
         existing = self.workers.get(clean_id) or {}
         if existing and tenant_id is not None and existing.get("tenant_id") != tenant_id:
+            if pruned:
+                self._persist()
             raise WorkflowError("worker is not registered for this tenant")
+        if not existing:
+            tenant_worker_count = sum(
+                worker.get("tenant_id") == tenant_id
+                for worker in self.workers.values()
+            )
+            if tenant_worker_count >= self.job_lease_policy.worker_registry_max_per_tenant:
+                if pruned:
+                    self._persist()
+                raise WorkflowError("Worker registry capacity has been reached for this tenant")
         if resources is None:
             resources = {}
         if not isinstance(resources, dict):

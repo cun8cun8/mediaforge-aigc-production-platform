@@ -261,12 +261,18 @@ def test_scheduled_retry_persists_and_promotes_when_due() -> None:
 
 def test_job_lease_policy_reads_and_validates_environment(monkeypatch) -> None:
     monkeypatch.setenv("MEDIAFORGE_JOB_LEASE_SECONDS", "12.5")
+    monkeypatch.setenv("MEDIAFORGE_WORKER_REGISTRY_RETENTION_SECONDS", "3600")
+    monkeypatch.setenv("MEDIAFORGE_WORKER_REGISTRY_MAX_PER_TENANT", "7")
 
     policy = JobLeasePolicy.from_env()
 
     assert policy.stale_after_seconds == 12.5
+    assert policy.worker_registry_retention_seconds == 3600
+    assert policy.worker_registry_max_per_tenant == 7
     with pytest.raises(ValueError):
         JobLeasePolicy(stale_after_seconds=0)
+    with pytest.raises(ValueError, match="retention"):
+        JobLeasePolicy(stale_after_seconds=900, worker_registry_retention_seconds=900)
 
 
 def test_mock_provider_creates_a_probeable_video(tmp_path: Path) -> None:
