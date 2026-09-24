@@ -34,6 +34,10 @@ observability = [
   "langfuse>=4.7,<5",
 ]
 
+temporal = [
+  "temporalio>=1.31,<2",
+]
+
 agents = [
   "langgraph>=1.2,<2",
   "langgraph-checkpoint-sqlite>=3.1,<4",
@@ -54,6 +58,7 @@ mediaforge-c2pa-signer = "mediaforge_p1.c2pa_signer:signer_main"
 mediaforge-c2pa-signer-client = "mediaforge_p1.c2pa_signer:client_main"
 mediaforge-c2pa-verifier = "mediaforge_p1.c2pa_signer:verifier_main"
 mediaforge-c2pa-verifier-client = "mediaforge_p1.c2pa_signer:verifier_client_main"
+mediaforge-temporal-worker = "mediaforge_p1.temporal_worker:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

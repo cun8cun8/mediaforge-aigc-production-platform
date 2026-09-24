@@ -26,7 +26,7 @@ MediaForge 以这些问题为第一等能力，提供：
 | 能力域 | 已有能力 |
 | --- | --- |
 | 创意到分镜 | 原著导入、故事事件、Story Bible、剧本场次、可恢复规划、镜头卡 |
-| 生产编排 | 六阶段门禁、阶段锁定、返工影响分析、任务队列、Worker 租约与失败恢复 |
+| 生产编排 | 六阶段门禁、阶段锁定、返工影响分析、任务队列、Worker 租约与失败恢复、可选 Temporal 持久化编排 |
 | 生成接入 | Mock、ComfyUI 图像、Replicate 图生视频、本地 GPU 命令适配器、能力路由与故障切换 |
 | AI 可观测性 | 本地审计与追踪、Prometheus 指标、可选 Langfuse v4 Provider/评测观测，默认脱敏外发 |
 | 后期与资产 | 参考图、资产哈希、字幕与对白、音频、口型同步适配器、FFmpeg 导出与交付 ZIP |
@@ -237,6 +237,7 @@ GitHub Actions 会运行 Python 回归、浏览器验收、Compose/Kubernetes �
 | 真实 Provider 和工作流 pinning | [ComfyUI](docs/comfyui-provider.md) / [Replicate](docs/replicate-provider.md) |
 | 分阶段规划、人工复核和恢复 | [Staged Planning](docs/staged-planning.md) |
 | PostgreSQL、Redis、MinIO、OIDC、监控、备份 | [生产部署](docs/production-deployment.md) |
+| Temporal 持久化长任务编排与 Worker | [Temporal 编排](docs/temporal-orchestration.md) |
 | 发布前质量门与运维验收 | [发布清单](docs/release-checklist.md) |
 | 单控制面预发布 Compose 与 ComfyUI 切换 | [预发布指南](ops/staging/README.md) |
 | 所有运行时 API 与细节 | [运行时参考](docs/runtime-reference.md) |

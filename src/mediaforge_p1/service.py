@@ -77,6 +77,10 @@ from .audit_integrity import event_hash as audit_event_hash, verify_event_chain
 from .audit_anchor import AuditAnchorError, AuditAnchorStore
 from .observability import RuntimeMetrics
 from .langfuse_observability import LangfuseObservability
+from .temporal_orchestration import (
+    TemporalOperationRequest,
+    TemporalOrchestrator,
+)
 from .alerts import (
     OperationsAlertSettings,
     evaluate_operations_alerts,
@@ -279,6 +283,7 @@ class MediaForgeService:
         self.siem.configure_outbox(self.output_root / "siem-outbox.json")
         self.runtime_metrics = RuntimeMetrics()
         self.langfuse = LangfuseObservability.from_env()
+        self.temporal = TemporalOrchestrator.from_env()
         self.operations_alert_settings = OperationsAlertSettings.from_env()
         self._production_readiness_cache: dict[str, Any] | None = None
         self.delivery_dispatcher = DeliveryDispatcher.from_env(self.output_root)
@@ -361,6 +366,43 @@ class MediaForgeService:
 
     def langfuse_status(self) -> dict[str, Any]:
         return self.langfuse.status_view()
+
+    def temporal_status(self) -> dict[str, Any]:
+        return self.temporal.status_view()
+
+    def temporal_probe(self) -> dict[str, Any]:
+        return self.temporal.probe()
+
+    def validate_temporal_operation(self, request: TemporalOperationRequest) -> None:
+        project = self._project(request.project_id)
+        self._ensure_active(project)
+        if request.operation == "generation" and request.shot_id not in project.shots:
+            raise ShotNotFound(request.shot_id or "")
+
+    def record_temporal_event(
+        self,
+        request: TemporalOperationRequest,
+        *,
+        state: str,
+        actor: str,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        project = self._project(request.project_id)
+        self._record_event(
+            project,
+            action=f"orchestration.temporal_{state.lower()}",
+            actor=actor,
+            message=f"Temporal {request.operation} workflow {state.lower()}.",
+            shot_id=request.shot_id,
+            details={
+                "workflow_id": request.workflow_id,
+                "request_id": request.request_id,
+                "operation": request.operation,
+                "state": state,
+                **(details or {}),
+            },
+        )
+        self._persist()
 
     def delivery_dispatch_status(self) -> dict[str, Any]:
         return self.delivery_dispatcher.status_view()
@@ -714,6 +756,7 @@ class MediaForgeService:
         )
         content_credentials = self.content_credentials_status()
         langfuse = self.langfuse_status()
+        temporal = self.temporal_status()
         content_credentials_required = self.release_content_credentials_required()
         enterprise_ready = (
             bool(enterprise["identity"]["production_ready"])
@@ -863,6 +906,29 @@ class MediaForgeService:
                 ),
             },
             {
+                "code": "temporal_orchestration",
+                "passed": (not bool(temporal.get("enabled"))) or bool(
+                    temporal.get("configured")
+                    and temporal.get("worker_connection_configured")
+                ),
+                "blocking": False,
+                "message": (
+                    "Temporal durable orchestration is enabled and the Worker control-plane connection is configured."
+                    if temporal.get("enabled")
+                    and temporal.get("configured")
+                    and temporal.get("worker_connection_configured")
+                    else (
+                        "Temporal is disabled; the native lease Worker remains active."
+                        if not temporal.get("enabled")
+                        else (
+                            "Temporal is enabled but the SDK is unavailable."
+                            if not temporal.get("configured")
+                            else "Temporal is enabled but the Worker control-plane URL is missing."
+                        )
+                    )
+                ),
+            },
+            {
                 "code": "enterprise_runtime",
                 "passed": enterprise_ready,
                 "blocking": False,
@@ -910,6 +976,13 @@ class MediaForgeService:
             )
         if bool(langfuse.get("enabled")) and not bool(langfuse.get("client_ready")):
             next_actions.append("Install the Langfuse SDK and verify the configured Langfuse credentials.")
+        if bool(temporal.get("enabled")) and (
+            not bool(temporal.get("configured"))
+            or not bool(temporal.get("worker_connection_configured"))
+        ):
+            next_actions.append(
+                "Install the Temporal extra and configure the Worker control-plane URL before starting workflows."
+            )
         production_gaps = [
             {
                 "code": check["code"],
@@ -939,6 +1012,7 @@ class MediaForgeService:
             "webhooks": webhook,
             "runtime_metrics": self.runtime_metrics_view(),
             "langfuse": langfuse,
+            "temporal": temporal,
             "enterprise": enterprise,
             "control_plane": control_plane,
         }
@@ -7382,9 +7456,22 @@ class MediaForgeService:
         destination_uri: str | None = None,
         note: str = "",
         actor: str = "delivery-ops",
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         project = self._project(project_id)
         self._ensure_active(project)
+        clean_idempotency_key = self._delivery_idempotency_key(idempotency_key)
+        if clean_idempotency_key:
+            existing = next(
+                (
+                    delivery
+                    for delivery in project.deliveries
+                    if delivery.get("idempotency_key") == clean_idempotency_key
+                ),
+                None,
+            )
+            if existing is not None:
+                return self._idempotent_delivery_result(project, existing)
         if project.release is None:
             raise WorkflowError("release project before dispatching delivery")
         if not project.delivery_package:
@@ -7420,6 +7507,7 @@ class MediaForgeService:
                 recipient=recipient,
                 destination_uri=destination_uri,
                 note=note,
+                idempotency_key=clean_idempotency_key,
             )
         except (DeliveryDispatchError, EnterpriseConfigurationError) as exc:
             self._record_event(
@@ -7443,6 +7531,7 @@ class MediaForgeService:
             destination_uri=dispatch.destination_uri,
             note=note,
             actor=actor,
+            idempotency_key=clean_idempotency_key,
         )
         dispatch_data = dispatch.as_dict()
         if storage_object is not None:
@@ -7468,9 +7557,22 @@ class MediaForgeService:
         destination_uri: str | None = None,
         note: str = "",
         actor: str = "delivery-ops",
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         project = self._project(project_id)
         self._ensure_active(project)
+        clean_idempotency_key = self._delivery_idempotency_key(idempotency_key)
+        if clean_idempotency_key:
+            existing = next(
+                (
+                    delivery
+                    for delivery in project.deliveries
+                    if delivery.get("idempotency_key") == clean_idempotency_key
+                ),
+                None,
+            )
+            if existing is not None:
+                return self._idempotent_delivery_result(project, existing)
         if project.release is None:
             raise WorkflowError("release project before recording delivery")
         if not project.delivery_package:
@@ -7535,6 +7637,7 @@ class MediaForgeService:
             "destination_uri": destination,
             "note": note,
             "actor": actor,
+            "idempotency_key": clean_idempotency_key,
             "delivered_at": timestamp.isoformat(),
             "acknowledged_at": None,
             "acknowledged_by": None,
@@ -7581,6 +7684,31 @@ class MediaForgeService:
             "receipt_path": str(receipt_path),
             "distribution_report": str(distribution_path),
             "distribution": distribution,
+        }
+
+    @staticmethod
+    def _delivery_idempotency_key(value: str | None) -> str | None:
+        key = str(value or "").strip()
+        if not key:
+            return None
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,159}", key):
+            raise WorkflowError("idempotency key contains unsupported characters")
+        return key
+
+    def _idempotent_delivery_result(
+        self,
+        project: ProjectRuntime,
+        delivery: dict[str, Any],
+    ) -> dict[str, Any]:
+        distribution = self.distribution_report(project.brief.project_id)
+        return {
+            "project_id": project.brief.project_id,
+            "delivery": copy.deepcopy(delivery),
+            "receipt_path": delivery.get("receipt_path"),
+            "distribution_report": str(self._distribution_report(project.brief.project_id)),
+            "distribution": distribution,
+            "dispatch": copy.deepcopy(delivery.get("dispatch")),
+            "idempotent": True,
         }
 
     def acknowledge_delivery(

@@ -304,6 +304,52 @@ Set `MEDIAFORGE_LANGFUSE_INCLUDE_PROMPT_CONTENT=true` only after a documented
 data-export review. Check `/observability/langfuse/status`; its response never
 contains either credential.
 
+### Optional Temporal Durable Orchestration
+
+MediaForge can use the official Temporal Python SDK for durable execution of
+long-running generation, rendering, delivery-package and dispatch operations.
+This is an optional boundary: the existing JobStore, control-plane lease,
+audit chain and callback contracts remain authoritative, and the native Worker
+continues to work when Temporal is disabled.
+
+Install the extra in the API and Worker environments:
+
+```powershell
+pip install -e ".[temporal]"
+$env:MEDIAFORGE_TEMPORAL_ENABLED = "true"
+$env:MEDIAFORGE_TEMPORAL_ADDRESS = "localhost:7233"
+$env:MEDIAFORGE_TEMPORAL_NAMESPACE = "default"
+$env:MEDIAFORGE_TEMPORAL_TASK_QUEUE = "mediaforge-orchestration"
+$env:MEDIAFORGE_TEMPORAL_CONTROL_PLANE_URL = "http://127.0.0.1:8020"
+```
+
+Start a Temporal development server or connect to an approved Temporal Cloud
+namespace, then start a separate Worker:
+
+```powershell
+temporal server start-dev
+mediaforge-temporal-worker
+```
+
+The API endpoint `POST /projects/{id}/orchestration/temporal` accepts
+`generation`, `render`, `package` or `dispatch`. Supply a stable `request_id`
+for client retries; it becomes part of the deterministic Workflow ID. Inspect
+state with `GET /projects/{id}/orchestration/temporal/{workflow_id}` and cancel
+with the corresponding `POST .../cancel` endpoint. The Worker calls the
+existing authenticated MediaForge API, so configure
+`MEDIAFORGE_TEMPORAL_CONTROL_PLANE_TOKEN_FILE` whenever the API requires a
+bearer token.
+
+For production, enable TLS and provide the client certificate, private key and
+server CA as protected files. Do not put Temporal credentials in source,
+Compose files or workflow payloads. Run `POST /orchestration/temporal/probe`
+and review `GET /ops/readiness` before routing real work to the queue.
+
+The integration follows Temporal's durable Workflow/Activity model; see the
+[official Python SDK](https://github.com/temporalio/sdk-python) and
+[Python samples](https://github.com/temporalio/samples-python) for server and
+namespace setup.
+
 ## Configuration Validation
 
 Run these checks in increasing order of cost and impact:

@@ -138,6 +138,8 @@ GET  /tenants/quota/status
 GET  /metrics
 GET  /metrics/runtime
 GET  /observability/langfuse/status
+GET  /orchestration/temporal/status
+POST /orchestration/temporal/probe
 GET  /delivery/status
 GET  /quality/status
 GET  /speech/status
@@ -165,6 +167,9 @@ POST /governance/license-registry/validate
 POST /governance/license-registry/import
 GET  /governance/license-registry/export
 POST /projects/{id}/jobs/{job_id}/callback
+POST /projects/{id}/orchestration/temporal
+GET  /projects/{id}/orchestration/temporal/{workflow_id}
+POST /projects/{id}/orchestration/temporal/{workflow_id}/cancel
 POST /projects
 POST /projects/import
 POST /projects/import-package

@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from time import perf_counter
 from pathlib import Path
 from typing import Any, Literal
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
@@ -50,6 +51,11 @@ from .service import (
 from .registry_sync import RegistrySyncError
 from .router import ProviderRegistration
 from .speech import SpeechSynthesisError
+from .temporal_orchestration import (
+    TemporalConfigurationError,
+    TemporalOperationRequest,
+    TemporalOrchestrationError,
+)
 
 
 class ReviewRequest(BaseModel):
@@ -88,6 +94,22 @@ class DeliveryRequest(BaseModel):
 
 class DeliveryDispatchRequest(DeliveryRequest):
     pass
+
+
+class TemporalStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operation: Literal["generation", "render", "package", "dispatch"]
+    request_id: str = Field(default_factory=lambda: uuid4().hex, max_length=160)
+    shot_id: str | None = Field(default=None, max_length=160)
+    delivery: DeliveryDispatchRequest | None = None
+    actor: str = Field(default="studio-user", min_length=1, max_length=120)
+
+
+class TemporalCancelRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    actor: str = Field(default="studio-user", min_length=1, max_length=120)
 
 
 class BillingEventRequest(BaseModel):
@@ -1016,6 +1038,132 @@ def create_app(output_root: Path | None = None) -> FastAPI:
     @app.get("/observability/langfuse/status")
     def langfuse_status() -> dict[str, Any]:
         return service.langfuse_status()
+
+    @app.get("/orchestration/temporal/status")
+    def temporal_status() -> dict[str, Any]:
+        return service.temporal_status()
+
+    @app.post("/orchestration/temporal/probe")
+    def temporal_probe() -> dict[str, Any]:
+        try:
+            return service.temporal_probe()
+        except TemporalOrchestrationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.post("/projects/{project_id}/orchestration/temporal")
+    def start_temporal_orchestration(
+        project_id: str,
+        payload: TemporalStartRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        principal = request.state.principal
+        actor = principal.subject if principal.authenticated else payload.actor
+        try:
+            operation = TemporalOperationRequest(
+                project_id=project_id,
+                operation=payload.operation,
+                request_id=payload.request_id,
+                shot_id=payload.shot_id,
+                delivery=(
+                    payload.delivery.model_dump(
+                        exclude_none=True,
+                        exclude={"actor"},
+                    )
+                    if payload.delivery is not None
+                    else None
+                ),
+                actor=actor,
+                activity_timeout_seconds=service.temporal.settings.activity_timeout_seconds,
+                retry_max_attempts=service.temporal.settings.retry_max_attempts,
+            )
+            service.validate_temporal_operation(operation)
+            service.record_temporal_event(
+                operation,
+                state="REQUESTED",
+                actor=actor,
+            )
+            result = service.temporal.start(operation)
+            service.record_temporal_event(
+                operation,
+                state="ALREADY_STARTED" if result["already_started"] else "STARTED",
+                actor=actor,
+                details={
+                    "task_queue": result["task_queue"],
+                    "already_started": result["already_started"],
+                },
+            )
+            return result
+        except (ProjectNotFound, ShotNotFound) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (TemporalConfigurationError, WorkflowError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except TemporalOrchestrationError as exc:
+            try:
+                service.record_temporal_event(
+                    operation,
+                    state="START_FAILED",
+                    actor=actor,
+                    details={"error": str(exc)[:500]},
+                )
+            except Exception:
+                pass
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.get("/projects/{project_id}/orchestration/temporal/{workflow_id}")
+    def temporal_orchestration_detail(
+        project_id: str,
+        workflow_id: str,
+    ) -> dict[str, Any]:
+        if not workflow_id.startswith(f"mediaforge:{project_id}:"):
+            raise HTTPException(status_code=404, detail="workflow not found")
+        try:
+            service._project(project_id)
+            return service.temporal.describe(workflow_id)
+        except ProjectNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except TemporalConfigurationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except TemporalOrchestrationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.post("/projects/{project_id}/orchestration/temporal/{workflow_id}/cancel")
+    def cancel_temporal_orchestration(
+        project_id: str,
+        workflow_id: str,
+        payload: TemporalCancelRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        if not workflow_id.startswith(f"mediaforge:{project_id}:"):
+            raise HTTPException(status_code=404, detail="workflow not found")
+        principal = request.state.principal
+        actor = principal.subject if principal.authenticated else payload.actor
+        try:
+            project = service._project(project_id)
+            service._ensure_active(project)
+            service._record_event(
+                project,
+                action="orchestration.temporal_cancel_requested",
+                actor=actor,
+                message="Temporal workflow cancellation requested.",
+                details={"workflow_id": workflow_id},
+            )
+            service._persist()
+            result = service.temporal.cancel(workflow_id)
+            service._record_event(
+                project,
+                action="orchestration.temporal_canceled",
+                actor=actor,
+                message="Temporal workflow cancellation submitted.",
+                details={"workflow_id": workflow_id},
+            )
+            service._persist()
+            return result
+        except ProjectNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (TemporalConfigurationError, WorkflowError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except TemporalOrchestrationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.get("/ops/alerts")
     def operations_alerts() -> dict[str, Any]:
@@ -3674,16 +3822,20 @@ def create_app(output_root: Path | None = None) -> FastAPI:
     @app.post("/projects/{project_id}/deliveries/dispatch")
     def dispatch_delivery(
         project_id: str,
-        request: DeliveryDispatchRequest,
+        payload: DeliveryDispatchRequest,
+        request: Request,
     ) -> dict:
         try:
+            principal = request.state.principal
+            actor = principal.subject if principal.authenticated else payload.actor
             return service.dispatch_delivery(
                 project_id,
-                channel=request.channel,
-                recipient=request.recipient,
-                destination_uri=request.destination_uri,
-                note=request.note,
-                actor=request.actor,
+                channel=payload.channel,
+                recipient=payload.recipient,
+                destination_uri=payload.destination_uri,
+                note=payload.note,
+                actor=actor,
+                idempotency_key=request.headers.get("Idempotency-Key"),
             )
         except ProjectNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc

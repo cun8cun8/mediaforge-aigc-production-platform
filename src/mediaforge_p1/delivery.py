@@ -102,6 +102,7 @@ class DeliveryDispatcher:
         recipient: str,
         destination_uri: str | None = None,
         note: str = "",
+        idempotency_key: str | None = None,
     ) -> DeliveryDispatchResult:
         if self.mode == "disabled":
             raise DeliveryDispatchError("delivery dispatcher is disabled")
@@ -110,7 +111,12 @@ class DeliveryDispatcher:
             raise DeliveryDispatchError(f"delivery package not found: {package}")
         package_sha256 = self._sha256(package)
         package_size = package.stat().st_size
-        delivery_id = f"dispatch_{time.strftime('%Y%m%d%H%M%S')}_{uuid4().hex[:8]}"
+        delivery_id = (
+            "dispatch_"
+            + hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()[:20]
+            if idempotency_key
+            else f"dispatch_{time.strftime('%Y%m%d%H%M%S')}_{uuid4().hex[:8]}"
+        )
         destination = (destination_uri or "").strip()
         parsed = urlparse(destination) if destination else None
         scheme = (parsed.scheme if parsed else "").lower()
@@ -125,6 +131,7 @@ class DeliveryDispatcher:
                 note=note,
                 package_sha256=package_sha256,
                 package_size=package_size,
+                idempotency_key=idempotency_key,
             )
         if scheme == "file":
             return self._dispatch_file(
@@ -146,6 +153,7 @@ class DeliveryDispatcher:
                 note=note,
                 package_sha256=package_sha256,
                 package_size=package_size,
+                idempotency_key=idempotency_key,
             )
         raise DeliveryDispatchError(
             "destination_uri must use file://, http://, https://, "
@@ -164,6 +172,7 @@ class DeliveryDispatcher:
         note: str,
         package_sha256: str,
         package_size: int,
+        idempotency_key: str | None,
     ) -> DeliveryDispatchResult:
         destination_dir = self.output_root / "delivery-out" / project_id / delivery_id
         destination_dir.mkdir(parents=True, exist_ok=True)
@@ -183,6 +192,7 @@ class DeliveryDispatcher:
                     "package": str(destination_package),
                     "package_sha256": package_sha256,
                     "package_size_bytes": package_size,
+                    "idempotency_key": idempotency_key,
                     "dispatched_at": time.time(),
                 },
                 ensure_ascii=True,
@@ -242,6 +252,7 @@ class DeliveryDispatcher:
         note: str,
         package_sha256: str,
         package_size: int,
+        idempotency_key: str | None,
     ) -> DeliveryDispatchResult:
         body = package.read_bytes()
         headers = {
@@ -256,6 +267,9 @@ class DeliveryDispatcher:
         }
         if note:
             headers["X-MediaForge-Note"] = note[:1000]
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
+            headers["X-MediaForge-Idempotency-Key"] = idempotency_key
         if self.secret:
             signing = f"{delivery_id}.{package_sha256}.{package_size}".encode()
             headers["X-MediaForge-Signature"] = hmac.new(

@@ -14,7 +14,7 @@ inside the project state machine.
 | [Langfuse](https://github.com/langfuse/langfuse) | LLM tracing, prompt/model experiment analysis | Integrated as optional observability | Langfuse v4 OpenTelemetry SDK; default export is redacted and cannot interrupt media generation |
 | [OpenTelemetry](https://github.com/open-telemetry/opentelemetry-python) | Portable tracing standard | Adopted through Langfuse integration | Preserve MediaForge audit/event chain as the governance record |
 | [c2pa-rs](https://github.com/contentauth/c2pa-rs) / C2PA Tool | Content credentials | Compatible external signer/verifier boundary | Isolated signing service and independent verification; do not invent a proprietary credential format |
-| [Temporal](https://github.com/temporalio/temporal) | Long-running distributed orchestration | Deferred, deliberate migration candidate | Start with external generation, rendering and delivery only after PostgreSQL/Redis production runtime is proven |
+| [Temporal](https://github.com/temporalio/temporal) | Long-running distributed orchestration | Integrated as an optional orchestration boundary | API starts durable generation, rendering, packaging or dispatch workflows; Activities call the existing control plane, while native leases remain the fallback |
 | [Yjs](https://github.com/yjs/yjs) | Browser text/timeline collaboration | Deferred, deliberate migration candidate | Replace only editor document synchronization; preserve MediaForge authorization, locks, approvals and audit events |
 | [Diffusers](https://github.com/huggingface/diffusers) | Local model execution | Provider implementation option | Expose it only through the `GenerationProvider` protocol with fixed model/version receipts |
 
@@ -34,8 +34,9 @@ External systems receive a normalized, least-privilege view:
 3. Langfuse receives identifiers, version fingerprints, cost, duration,
    artifact hashes and evaluation outcomes by default. Prompt/source/media
    content requires an explicit export approval.
-4. A future Temporal Worker executes Activities but must report terminal state
-   back through the existing job lease and callback contract.
+4. The optional Temporal Worker executes Activities through the existing control
+   plane API. MediaForge remains the business fact source; the Worker never
+   writes project state directly.
 5. A future Yjs provider synchronizes editable text only; server-side commits
    still create MediaForge collaboration and audit events.
 
