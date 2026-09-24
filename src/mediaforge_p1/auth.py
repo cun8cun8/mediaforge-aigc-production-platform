@@ -423,10 +423,13 @@ class AuthManager:
         if path == "/auth/logout":
             return
         if principal.role == "orchestrator":
-            if self.is_temporal_activity_process(method=method, path=path):
+            if (
+                self.is_temporal_activity_process(method=method, path=path)
+                or self.is_temporal_worker_heartbeat(method=method, path=path)
+            ):
                 return
             raise AuthenticationError(
-                "orchestrator credentials are restricted to Temporal activity paths",
+                "orchestrator credentials are restricted to Temporal activity and heartbeat paths",
                 status_code=403,
             )
         if (
@@ -534,3 +537,10 @@ class AuthManager:
         if len(parts) == 5 and parts[0] == "projects" and parts[2] == "shots" and parts[4] == "submit":
             return True
         return len(parts) == 4 and parts[0] == "projects" and parts[2:] == ["deliveries", "dispatch"]
+
+    @staticmethod
+    def is_temporal_worker_heartbeat(*, method: str, path: str) -> bool:
+        return (
+            method.upper() == "POST"
+            and path.rstrip("/") == "/orchestration/temporal/workers/heartbeat"
+        )

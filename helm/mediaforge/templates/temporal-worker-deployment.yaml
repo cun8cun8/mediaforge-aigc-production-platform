@@ -63,6 +63,12 @@ spec:
               value: http://{{ include "mediaforge.fullname" . }}:{{ .Values.service.port }}
             - name: MEDIAFORGE_TEMPORAL_CONTROL_PLANE_TOKEN_FILE
               value: {{ printf "%s/%s" .Values.runtime.secretMountPath .Values.temporal.worker.controlPlaneTokenSecretKey | quote }}
+            - name: MEDIAFORGE_TEMPORAL_WORKER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: MEDIAFORGE_BUILD_VERSION
+              value: {{ .Chart.AppVersion | quote }}
             {{- with .Values.temporal.worker.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

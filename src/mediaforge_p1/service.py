@@ -268,6 +268,7 @@ class MediaForgeService:
         self._control_plane_lock = RLock()
         self.projects: dict[str, ProjectRuntime] = {}
         self.workers: dict[str, dict[str, Any]] = {}
+        self.temporal_workers: dict[str, dict[str, Any]] = {}
         self.provider_operations: list[dict[str, Any]] = []
         self.operations_alert_acknowledgements: dict[str, dict[str, Any]] = {}
         self.c2pa_attestation: dict[str, Any] | None = None
@@ -373,6 +374,136 @@ class MediaForgeService:
 
     def temporal_probe(self) -> dict[str, Any]:
         return self.temporal.probe()
+
+    @staticmethod
+    def _temporal_worker_key(tenant_id: str, worker_id: str) -> str:
+        return f"{tenant_id}:{worker_id}"
+
+    @staticmethod
+    def _temporal_heartbeat_age_seconds(
+        heartbeat: Any,
+        *,
+        now: datetime,
+    ) -> float | None:
+        if not heartbeat:
+            return None
+        try:
+            heartbeat_at = datetime.fromisoformat(str(heartbeat).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if heartbeat_at.tzinfo is None:
+            heartbeat_at = heartbeat_at.replace(tzinfo=timezone.utc)
+        return round(max((now - heartbeat_at).total_seconds(), 0.0), 3)
+
+    def _temporal_worker_status_locked(
+        self,
+        *,
+        tenant_id: str | None = None,
+    ) -> dict[str, Any]:
+        now = datetime.now(timezone.utc)
+        stale_after_seconds = self.temporal.settings.worker_stale_after_seconds
+        rows: list[dict[str, Any]] = []
+        for record in self.temporal_workers.values():
+            if tenant_id is not None and record.get("tenant_id") != tenant_id:
+                continue
+            item = copy.deepcopy(record)
+            age = self._temporal_heartbeat_age_seconds(
+                item.get("last_heartbeat_at"),
+                now=now,
+            )
+            item["heartbeat_age_seconds"] = age
+            item["status"] = (
+                "ONLINE"
+                if age is not None and age <= stale_after_seconds
+                else "STALE"
+            )
+            rows.append(item)
+        rows.sort(
+            key=lambda item: (
+                item.get("status") != "ONLINE",
+                str(item.get("last_heartbeat_at") or ""),
+                str(item.get("worker_id") or ""),
+            ),
+            reverse=False,
+        )
+        online_count = sum(item["status"] == "ONLINE" for item in rows)
+        return {
+            "schema_version": "mediaforge-temporal-worker-control-v1",
+            "generated_at": now.isoformat(),
+            "heartbeat_interval_seconds": self.temporal.settings.worker_heartbeat_seconds,
+            "stale_after_seconds": stale_after_seconds,
+            "worker_count": len(rows),
+            "online_count": online_count,
+            "stale_count": len(rows) - online_count,
+            "active_operation_count": sum(
+                int(item.get("active_operations") or 0) for item in rows
+            ),
+            "workers": rows,
+        }
+
+    def temporal_worker_status(
+        self,
+        *,
+        tenant_id: str | None = None,
+    ) -> dict[str, Any]:
+        with self._state_lock:
+            return self._temporal_worker_status_locked(tenant_id=tenant_id)
+
+    def temporal_worker_heartbeat(
+        self,
+        worker_id: str,
+        *,
+        tenant_id: str,
+        task_queue: str,
+        namespace: str,
+        version: str = "unknown",
+        active_operations: int = 0,
+        completed_operations: int = 0,
+        failed_operations: int = 0,
+    ) -> dict[str, Any]:
+        clean_worker_id = self._clean_worker_id(worker_id)
+        clean_tenant_id = str(tenant_id or "").strip()
+        if not clean_tenant_id or len(clean_tenant_id) > 120:
+            raise WorkflowError("Temporal Worker requires a valid tenant identity")
+        clean_task_queue = str(task_queue or "").strip()
+        clean_namespace = str(namespace or "").strip()
+        if (
+            clean_task_queue != self.temporal.settings.task_queue
+            or clean_namespace != self.temporal.settings.namespace
+        ):
+            raise WorkflowError("Temporal Worker queue or namespace does not match this control plane")
+        clean_version = str(version or "unknown").strip()[:120] or "unknown"
+        counters = {
+            "active_operations": active_operations,
+            "completed_operations": completed_operations,
+            "failed_operations": failed_operations,
+        }
+        for name, value in counters.items():
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 1_000_000:
+                raise WorkflowError(f"{name} must be an integer between 0 and 1000000")
+        with self._state_lock:
+            now = datetime.now(timezone.utc).isoformat()
+            key = self._temporal_worker_key(clean_tenant_id, clean_worker_id)
+            existing = self.temporal_workers.get(key) or {}
+            self.temporal_workers[key] = {
+                "worker_id": clean_worker_id,
+                "tenant_id": clean_tenant_id,
+                "task_queue": clean_task_queue,
+                "namespace": clean_namespace,
+                "version": clean_version,
+                **counters,
+                "registered_at": existing.get("registered_at") or now,
+                "last_heartbeat_at": now,
+                "heartbeat_count": int(existing.get("heartbeat_count") or 0) + 1,
+            }
+            self._persist()
+            report = self._temporal_worker_status_locked(tenant_id=clean_tenant_id)
+            worker = next(
+                item
+                for item in report["workers"]
+                if item["worker_id"] == clean_worker_id
+            )
+            return {"worker": worker, "accepted": True}
 
     @staticmethod
     def _temporal_execution_status(value: Any) -> str:
@@ -612,6 +743,7 @@ class MediaForgeService:
 
     def temporal_orchestration_prometheus(self) -> str:
         status = self.temporal_status()
+        workers = self.temporal_worker_status()
         counts: dict[str, int] = {}
         for project in self.projects.values():
             for workflow in project.temporal_workflows.values():
@@ -630,6 +762,28 @@ class MediaForgeService:
         for workflow_state, count in sorted(counts.items()):
             label = self._prometheus_label(workflow_state)
             lines.append(f'mediaforge_temporal_workflows{{state="{label}"}} {count}')
+        lines.extend(
+            [
+                "# HELP mediaforge_temporal_workers Number of registered Temporal Workers by liveness state.",
+                "# TYPE mediaforge_temporal_workers gauge",
+                f'mediaforge_temporal_workers{{status="ONLINE"}} {workers["online_count"]}',
+                f'mediaforge_temporal_workers{{status="STALE"}} {workers["stale_count"]}',
+                "# HELP mediaforge_temporal_worker_active_operations Active MediaForge Temporal Activities reported by Workers.",
+                "# TYPE mediaforge_temporal_worker_active_operations gauge",
+                f'mediaforge_temporal_worker_active_operations {workers["active_operation_count"]}',
+                "# HELP mediaforge_temporal_worker_oldest_heartbeat_seconds Age of the oldest registered Temporal Worker heartbeat.",
+                "# TYPE mediaforge_temporal_worker_oldest_heartbeat_seconds gauge",
+            ]
+        )
+        ages = [
+            float(item["heartbeat_age_seconds"])
+            for item in workers["workers"]
+            if item.get("heartbeat_age_seconds") is not None
+        ]
+        lines.append(
+            "mediaforge_temporal_worker_oldest_heartbeat_seconds "
+            f"{max(ages) if ages else 0:.3f}"
+        )
         return "\n".join(lines) + "\n"
 
     def validate_temporal_operation(self, request: TemporalOperationRequest) -> None:
@@ -889,6 +1043,7 @@ class MediaForgeService:
         """Discard standby memory before it becomes the PostgreSQL snapshot writer."""
         self.projects = {}
         self.workers = {}
+        self.temporal_workers = {}
         self.provider_operations = []
         self.operations_alert_acknowledgements = {}
         self.c2pa_attestation = None
@@ -17306,6 +17461,7 @@ class MediaForgeService:
                 ],
                 "jobs": self.jobs.as_list(),
                 "workers": copy.deepcopy(self.workers),
+                "temporal_workers": copy.deepcopy(self.temporal_workers),
                 "provider_circuit_breaker": self.router.circuit_breaker.export_state(),
                 "provider_operations": copy.deepcopy(self.provider_operations),
                 "operations_alert_acknowledgements": copy.deepcopy(
@@ -17407,6 +17563,15 @@ class MediaForgeService:
                     str(worker_id): copy.deepcopy(worker)
                     for worker_id, worker in stored_workers.items()
                     if isinstance(worker, dict)
+                }
+            stored_temporal_workers = payload.get("temporal_workers", {})
+            if isinstance(stored_temporal_workers, dict):
+                self.temporal_workers = {
+                    str(key): copy.deepcopy(worker)
+                    for key, worker in stored_temporal_workers.items()
+                    if isinstance(worker, dict)
+                    and str(worker.get("worker_id") or "").strip()
+                    and str(worker.get("tenant_id") or "").strip()
                 }
             migrated = False
             registry_payload = payload.get("license_registry")

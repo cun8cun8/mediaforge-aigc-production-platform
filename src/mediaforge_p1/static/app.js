@@ -2032,7 +2032,7 @@ async function loadProjectContextNow(projectId) {
     state.sourceChapterEditingId = null;
     state.providerContract = null;
   }
-  const [project, cost, jobs, audit, operations, assets, evaluation, llmops, editTimeline, benchmark, routes, compliance, continuity, distribution, trace, retrospective, collaboration, collaborationDocuments, dataset, sourceOcrStatus, temporalReport] = await Promise.all([
+  const [project, cost, jobs, audit, operations, assets, evaluation, llmops, editTimeline, benchmark, routes, compliance, continuity, distribution, trace, retrospective, collaboration, collaborationDocuments, dataset, sourceOcrStatus, temporalReport, temporalWorkerStatus] = await Promise.all([
     request(`/projects/${encodeURIComponent(projectId)}`),
     request(`/projects/${encodeURIComponent(projectId)}/cost`),
     request(`/projects/${encodeURIComponent(projectId)}/jobs`),
@@ -2054,6 +2054,7 @@ async function loadProjectContextNow(projectId) {
     request(`/projects/${encodeURIComponent(projectId)}/training-dataset`),
     request("/source-ingest/status"),
     request(`/projects/${encodeURIComponent(projectId)}/orchestration/temporal`),
+    request("/orchestration/temporal/workers"),
   ]);
   if (generation !== state.projectGeneration || identityGeneration !== state.identityGeneration) return;
   state.project = project;
@@ -2079,7 +2080,7 @@ async function loadProjectContextNow(projectId) {
   state.collaborationDocuments = collaborationDocuments;
   state.dataset = dataset;
   state.sourceOcrStatus = sourceOcrStatus;
-  state.temporalReport = temporalReport;
+  state.temporalReport = {...temporalReport, worker_status: temporalWorkerStatus};
   state.projectId = projectId;
   syncDialogueDraft(project, switchingProject || !state.dialogueDirty);
   connectProjectEvents(projectId, state.audit.length);
@@ -2245,6 +2246,8 @@ function renderTemporalPanel() {
   const report = state.temporalReport || {};
   const settings = report.settings || {};
   const workflows = report.workflows || [];
+  const workerStatus = report.worker_status || {};
+  const temporalWorkers = workerStatus.workers || [];
   const enabled = Boolean(settings.enabled && settings.configured);
   $("temporalRuntime").innerHTML = runtimeRow(
     "Temporal 服务", enabled ? "已启用" : "未启用",
@@ -2253,6 +2256,20 @@ function renderTemporalPanel() {
     "任务队列", settings.task_queue || "未配置",
     settings.worker_connection_configured ? "执行器控制面地址已配置" : "执行器控制面地址未配置",
   ) + runtimeRow("连接状态", settings.client_ready ? "已连接" : "未验证", settings.tls ? "TLS 已启用" : "明文连接");
+  const onlineWorkers = Number(workerStatus.online_count || 0);
+  const staleWorkers = Number(workerStatus.stale_count || 0);
+  const activeOperations = Number(workerStatus.active_operation_count || 0);
+  $("temporalWorkerCount").textContent = temporalWorkers.length
+    ? `在线 ${onlineWorkers} · 超时 ${staleWorkers} · 活动 ${activeOperations}`
+    : "暂无执行器心跳";
+  $("temporalWorkerList").innerHTML = temporalWorkers.length
+    ? temporalWorkers.map((worker) => {
+      const isOnline = worker.status === "ONLINE";
+      const age = Number(worker.heartbeat_age_seconds);
+      const ageText = Number.isFinite(age) ? `${Math.max(Math.round(age), 0)} 秒前心跳` : "无有效心跳";
+      return `<div class="temporal-worker-row"><div><strong>${escapeHtml(worker.worker_id || "未命名执行器")} · ${isOnline ? "在线" : "超时"}</strong><span>${escapeHtml(worker.task_queue || "未配置队列")} · ${escapeHtml(worker.namespace || "default")} · ${escapeHtml(worker.version || "unknown")}</span></div><div class="temporal-worker-meta"><strong>${escapeHtml(ageText)}</strong><span>活动 ${escapeHtml(String(worker.active_operations || 0))} · 成功 ${escapeHtml(String(worker.completed_operations || 0))} · 失败 ${escapeHtml(String(worker.failed_operations || 0))}</span></div></div>`;
+    }).join("")
+    : `<div class="project-empty">尚未收到 Temporal Worker 心跳</div>`;
   const errors = report.refresh_errors || [];
   $("temporalMessage").textContent = errors.length
     ? `刷新失败 ${errors.length} 个工作流：${errors[0].error}`
@@ -2280,11 +2297,11 @@ async function loadTemporalPanel(refresh = false) {
   const generation = ++state.temporalGeneration;
   const identityGeneration = state.identityGeneration;
   try {
-    const [report, me] = await Promise.all([
-      request(`/projects/${encodeURIComponent(projectId)}/orchestration/temporal${refresh ? "?refresh=true" : ""}`), request("/auth/me"),
+    const [report, me, workerStatus] = await Promise.all([
+      request(`/projects/${encodeURIComponent(projectId)}/orchestration/temporal${refresh ? "?refresh=true" : ""}`), request("/auth/me"), request("/orchestration/temporal/workers"),
     ]);
     if (projectId !== state.projectId || generation !== state.temporalGeneration || identityGeneration !== state.identityGeneration) return;
-    state.temporalReport = report;
+    state.temporalReport = {...report, worker_status: workerStatus};
     const member = state.collaboration?.members?.find((item) => item.subject === me.subject);
     state.temporalPermissions = {manage: me.role === "admin" || (["editor", "publisher"].includes(me.role) && ["editor", "publisher", "owner"].includes(member?.role))};
     renderTemporalPanel();

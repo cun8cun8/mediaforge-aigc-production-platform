@@ -101,6 +101,8 @@ class TemporalOrchestrationSettings:
     server_ca_file: str | None = None
     activity_timeout_seconds: int = 3600
     retry_max_attempts: int = 3
+    worker_heartbeat_seconds: int = 20
+    worker_stale_after_seconds: int = 75
 
     @classmethod
     def from_env(cls) -> "TemporalOrchestrationSettings":
@@ -136,6 +138,18 @@ class TemporalOrchestrationSettings:
                 minimum=1,
                 maximum=10,
             ),
+            worker_heartbeat_seconds=_env_int(
+                "MEDIAFORGE_TEMPORAL_WORKER_HEARTBEAT_SECONDS",
+                20,
+                minimum=5,
+                maximum=300,
+            ),
+            worker_stale_after_seconds=_env_int(
+                "MEDIAFORGE_TEMPORAL_WORKER_STALE_AFTER_SECONDS",
+                75,
+                minimum=15,
+                maximum=1800,
+            ),
         )
         settings.validate()
         return settings
@@ -160,6 +174,18 @@ class TemporalOrchestrationSettings:
             )
         if any((has_cert, has_key, has_ca)) and not self.tls:
             raise TemporalConfigurationError("Temporal mTLS requires MEDIAFORGE_TEMPORAL_TLS=true")
+        if not 5 <= self.worker_heartbeat_seconds <= 300:
+            raise TemporalConfigurationError(
+                "MEDIAFORGE_TEMPORAL_WORKER_HEARTBEAT_SECONDS must be between 5 and 300"
+            )
+        if not 15 <= self.worker_stale_after_seconds <= 1800:
+            raise TemporalConfigurationError(
+                "MEDIAFORGE_TEMPORAL_WORKER_STALE_AFTER_SECONDS must be between 15 and 1800"
+            )
+        if self.worker_stale_after_seconds <= self.worker_heartbeat_seconds:
+            raise TemporalConfigurationError(
+                "MEDIAFORGE_TEMPORAL_WORKER_STALE_AFTER_SECONDS must exceed the heartbeat interval"
+            )
 
     def tls_config(self) -> Any:
         """Build the SDK TLS value lazily so the base install stays dependency-free."""
@@ -272,6 +298,8 @@ class TemporalOrchestrator:
             "namespace": self.settings.namespace,
             "task_queue": self.settings.task_queue,
             "tls": self.settings.tls,
+            "worker_heartbeat_seconds": self.settings.worker_heartbeat_seconds,
+            "worker_stale_after_seconds": self.settings.worker_stale_after_seconds,
             "control_plane_url_configured": bool(self.settings.control_plane_url),
             "control_plane_token_configured": bool(self.settings.control_plane_token_file),
             "worker_connection_configured": bool(self.settings.control_plane_url),

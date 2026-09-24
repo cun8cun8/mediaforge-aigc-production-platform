@@ -550,6 +550,12 @@ input:focus, textarea:focus, select:focus {
 .temporal-workflow-row strong, .temporal-workflow-row span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .temporal-workflow-row strong { font-size: 11px; }
 .temporal-workflow-row span { margin-top: 4px; color: var(--muted); font-size: 10px; }
+.temporal-worker-list { max-height: 190px; overflow: auto; border-top: 1px solid var(--line); }
+.temporal-worker-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(132px, auto); gap: 10px; align-items: start; padding: 9px 0; border-bottom: 1px solid #edf0ed; }
+.temporal-worker-row strong, .temporal-worker-row span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.temporal-worker-row strong { font-size: 11px; }
+.temporal-worker-row span { margin-top: 4px; color: var(--muted); font-size: 10px; }
+.temporal-worker-meta { min-width: 132px; text-align: right; }
 .temporal-row-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .temporal-row-actions .button { min-height: 28px; padding: 5px 8px; font-size: 10px; }
 .temporal-detail { margin-top: 12px; }
@@ -631,6 +637,8 @@ input:focus, textarea:focus, select:focus {
   .worker-form { grid-template-columns: 1fr 1fr; }
   .worker-form input:first-child { grid-column: 1 / -1; }
   .worker-actions { grid-template-columns: 1fr; }
+  .temporal-worker-row { grid-template-columns: 1fr; }
+  .temporal-worker-meta { min-width: 0; text-align: left; }
 }
 .trace-list { max-height: 460px; overflow: auto; border-top: 1px solid var(--line); }
 .trace-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding: 10px 0; border-bottom: 1px solid #edf0ed; }

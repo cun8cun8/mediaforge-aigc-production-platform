@@ -83,6 +83,12 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if and .Values.temporal.enabled (not .Values.temporal.namespace) }}
 {{- fail "temporal.namespace is required when temporal.enabled=true" }}
 {{- end }}
+{{- if and .Values.temporal.enabled (lt (int .Values.temporal.workerHeartbeatSeconds) 5) }}
+{{- fail "temporal.workerHeartbeatSeconds must be at least 5" }}
+{{- end }}
+{{- if and .Values.temporal.enabled (le (int .Values.temporal.workerStaleAfterSeconds) (int .Values.temporal.workerHeartbeatSeconds)) }}
+{{- fail "temporal.workerStaleAfterSeconds must exceed temporal.workerHeartbeatSeconds" }}
+{{- end }}
 {{- if and .Values.ingress.enabled (eq (len .Values.ingress.hosts) 0) }}
 {{- fail "ingress.enabled requires at least one ingress.hosts entry" }}
 {{- end }}

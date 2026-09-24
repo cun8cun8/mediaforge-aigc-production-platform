@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
+import socket
 from dataclasses import replace
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -116,6 +118,30 @@ class TemporalControlPlaneClient:
         result["temporal_operation"] = operation
         return result
 
+    def heartbeat(
+        self,
+        *,
+        worker_id: str,
+        active_operations: int,
+        completed_operations: int,
+        failed_operations: int,
+        version: str,
+    ) -> dict[str, Any]:
+        """Report Worker liveness without granting general control-plane access."""
+        return self._request(
+            "POST",
+            "/orchestration/temporal/workers/heartbeat",
+            {
+                "worker_id": worker_id,
+                "task_queue": self.settings.task_queue,
+                "namespace": self.settings.namespace,
+                "version": version,
+                "active_operations": active_operations,
+                "completed_operations": completed_operations,
+                "failed_operations": failed_operations,
+            },
+        )
+
 
 def build_worker_settings(args: argparse.Namespace) -> TemporalOrchestrationSettings:
     settings = TemporalOrchestrationSettings.from_env()
@@ -153,6 +179,43 @@ async def run_temporal_worker(settings: TemporalOrchestrationSettings) -> None:
         ) from exc
 
     control_plane = TemporalControlPlaneClient(settings)
+    worker_id = (
+        os.getenv("MEDIAFORGE_TEMPORAL_WORKER_ID", "").strip()
+        or socket.gethostname().strip()
+        or "temporal-worker"
+    )
+    worker_version = (
+        os.getenv("MEDIAFORGE_BUILD_VERSION", "").strip()
+        or os.getenv("MEDIAFORGE_VERSION", "").strip()
+        or "unknown"
+    )
+    active_operations = 0
+    completed_operations = 0
+    failed_operations = 0
+
+    async def send_heartbeat() -> dict[str, Any]:
+        return await asyncio.to_thread(
+            control_plane.heartbeat,
+            worker_id=worker_id,
+            active_operations=active_operations,
+            completed_operations=completed_operations,
+            failed_operations=failed_operations,
+            version=worker_version,
+        )
+
+    async def heartbeat_loop() -> None:
+        while True:
+            await asyncio.sleep(settings.worker_heartbeat_seconds)
+            try:
+                await send_heartbeat()
+            except TemporalOrchestrationError:
+                # A temporary API outage must not interrupt active Temporal Activities.
+                # The control plane will expose this Worker as stale until it recovers.
+                continue
+
+    # Startup is deliberately fail-fast: a Worker without a reachable, authenticated
+    # control plane cannot safely run MediaForge Activities.
+    await send_heartbeat()
     client = await Client.connect(
         settings.address,
         namespace=settings.namespace,
@@ -161,6 +224,8 @@ async def run_temporal_worker(settings: TemporalOrchestrationSettings) -> None:
 
     @activity.defn(name="mediaforge.execute_operation")
     async def execute_operation(request: dict[str, Any]) -> dict[str, Any]:
+        nonlocal active_operations, completed_operations, failed_operations
+        active_operations += 1
         activity.heartbeat({"operation": request.get("operation"), "phase": "api_request"})
         try:
             validated = TemporalOperationRequest(
@@ -176,9 +241,16 @@ async def run_temporal_worker(settings: TemporalOrchestrationSettings) -> None:
             )
             result = await asyncio.to_thread(control_plane.invoke, validated.to_payload())
         except ControlPlaneHttpError as exc:
+            failed_operations += 1
             if 400 <= exc.status_code < 500:
                 raise ApplicationError(str(exc), non_retryable=True) from exc
             raise
+        except Exception:
+            failed_operations += 1
+            raise
+        finally:
+            active_operations = max(active_operations - 1, 0)
+        completed_operations += 1
         activity.heartbeat({"operation": request.get("operation"), "phase": "completed"})
         return result
 
@@ -188,7 +260,12 @@ async def run_temporal_worker(settings: TemporalOrchestrationSettings) -> None:
         workflows=[MediaForgeProductionWorkflow],
         activities=[execute_operation],
     )
-    await worker.run()
+    heartbeat_task = asyncio.create_task(heartbeat_loop())
+    try:
+        await worker.run()
+    finally:
+        heartbeat_task.cancel()
+        await asyncio.gather(heartbeat_task, return_exceptions=True)
 
 
 def check_temporal_worker(settings: TemporalOrchestrationSettings) -> dict[str, Any]:

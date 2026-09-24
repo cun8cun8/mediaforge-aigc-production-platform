@@ -112,6 +112,20 @@ class TemporalCancelRequest(BaseModel):
     actor: str = Field(default="studio-user", min_length=1, max_length=120)
 
 
+class TemporalWorkerHeartbeatRequest(BaseModel):
+    """Minimal Worker telemetry accepted from the tenant-bound orchestrator key."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    worker_id: str = Field(min_length=1, max_length=120)
+    task_queue: str = Field(min_length=1, max_length=120)
+    namespace: str = Field(min_length=1, max_length=120)
+    version: str = Field(default="unknown", min_length=1, max_length=120)
+    active_operations: int = Field(default=0, ge=0, le=1_000_000)
+    completed_operations: int = Field(default=0, ge=0, le=1_000_000)
+    failed_operations: int = Field(default=0, ge=0, le=1_000_000)
+
+
 class BillingEventRequest(BaseModel):
     event_id: str = Field(min_length=1, max_length=180)
     category: str = Field(min_length=1, max_length=120)
@@ -1050,6 +1064,36 @@ def create_app(output_root: Path | None = None) -> FastAPI:
     @app.get("/orchestration/temporal/status")
     def temporal_status() -> dict[str, Any]:
         return service.temporal_status()
+
+    @app.get("/orchestration/temporal/workers")
+    def temporal_workers(request: Request) -> dict[str, Any]:
+        principal = request.state.principal
+        return service.temporal_worker_status(tenant_id=principal.tenant_id)
+
+    @app.post("/orchestration/temporal/workers/heartbeat")
+    def temporal_worker_heartbeat(
+        payload: TemporalWorkerHeartbeatRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        principal = request.state.principal
+        if principal.role != "orchestrator" or not principal.tenant_id:
+            raise HTTPException(
+                status_code=403,
+                detail="only a tenant-bound Temporal orchestrator may report Worker heartbeats",
+            )
+        try:
+            return service.temporal_worker_heartbeat(
+                payload.worker_id,
+                tenant_id=principal.tenant_id,
+                task_queue=payload.task_queue,
+                namespace=payload.namespace,
+                version=payload.version,
+                active_operations=payload.active_operations,
+                completed_operations=payload.completed_operations,
+                failed_operations=payload.failed_operations,
+            )
+        except WorkflowError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post("/orchestration/temporal/probe")
     def temporal_probe() -> dict[str, Any]:

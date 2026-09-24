@@ -162,6 +162,46 @@ def test_worker_maps_operation_to_existing_control_plane(monkeypatch):
     assert result["temporal_operation"] == "dispatch"
 
 
+def test_worker_reports_heartbeat_to_the_minimal_control_plane_path(monkeypatch):
+    settings = TemporalOrchestrationSettings(
+        enabled=True,
+        control_plane_url="http://127.0.0.1:8020",
+    )
+    client = TemporalControlPlaneClient(settings)
+    calls = []
+
+    def fake_request(method, path, body=None, extra_headers=None):
+        calls.append((method, path, body, extra_headers))
+        return {"accepted": True}
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    result = client.heartbeat(
+        worker_id="temporal-1",
+        active_operations=2,
+        completed_operations=8,
+        failed_operations=1,
+        version="test",
+    )
+
+    assert result == {"accepted": True}
+    assert calls == [
+        (
+            "POST",
+            "/orchestration/temporal/workers/heartbeat",
+            {
+                "worker_id": "temporal-1",
+                "task_queue": "mediaforge-orchestration",
+                "namespace": "default",
+                "version": "test",
+                "active_operations": 2,
+                "completed_operations": 8,
+                "failed_operations": 1,
+            },
+            None,
+        )
+    ]
+
+
 def test_dispatcher_uses_stable_target_for_an_idempotency_key(tmp_path):
     package = tmp_path / "delivery.zip"
     package.write_bytes(b"delivery")
@@ -324,6 +364,83 @@ def test_temporal_workflow_index_persists_and_refreshes(tmp_path):
     assert reloaded_report["workflows"][0]["task_queue"] == "mediaforge-orchestration"
 
 
+def test_temporal_worker_registry_is_tenant_isolated_persistent_and_observable(tmp_path):
+    service = MediaForgeService(tmp_path)
+    service.temporal_worker_heartbeat(
+        "temporal-1",
+        tenant_id="tenant_a",
+        task_queue="mediaforge-orchestration",
+        namespace="default",
+        version="build-1",
+        active_operations=2,
+        completed_operations=8,
+        failed_operations=1,
+    )
+    service.temporal_worker_heartbeat(
+        "temporal-1",
+        tenant_id="tenant_b",
+        task_queue="mediaforge-orchestration",
+        namespace="default",
+    )
+
+    tenant_a = service.temporal_worker_status(tenant_id="tenant_a")
+    assert tenant_a["worker_count"] == 1
+    assert tenant_a["online_count"] == 1
+    assert tenant_a["active_operation_count"] == 2
+    assert tenant_a["workers"][0]["version"] == "build-1"
+    metrics = service.temporal_orchestration_prometheus()
+    assert 'mediaforge_temporal_workers{status="ONLINE"} 2' in metrics
+    assert "mediaforge_temporal_worker_active_operations 2" in metrics
+
+    reloaded = MediaForgeService(tmp_path)
+    persisted = reloaded.temporal_worker_status(tenant_id="tenant_a")
+    assert persisted["workers"][0]["worker_id"] == "temporal-1"
+    reloaded.temporal_workers["tenant_a:temporal-1"]["last_heartbeat_at"] = "2000-01-01T00:00:00+00:00"
+    assert reloaded.temporal_worker_status(tenant_id="tenant_a")["stale_count"] == 1
+
+
+def test_temporal_worker_heartbeat_api_requires_orchestrator_and_preserves_tenant(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEDIAFORGE_AUTH_MODE", "required")
+    monkeypatch.setenv("MEDIAFORGE_PROVIDER", "mock")
+    monkeypatch.setenv(
+        "MEDIAFORGE_API_KEYS",
+        '{"temporal":{"subject":"temporal-worker","role":"orchestrator","tenant_id":"tenant_a"},"admin":{"subject":"admin","role":"admin"}}',
+    )
+    app = create_app(output_root=tmp_path)
+    payload = {
+        "worker_id": "temporal-api-1",
+        "task_queue": "mediaforge-orchestration",
+        "namespace": "default",
+        "version": "test",
+        "active_operations": 1,
+        "completed_operations": 4,
+        "failed_operations": 0,
+    }
+
+    with TestClient(app) as client:
+        rejected = client.post("/orchestration/temporal/workers/heartbeat", json=payload)
+        accepted = client.post(
+            "/orchestration/temporal/workers/heartbeat",
+            json=payload,
+            headers={"Authorization": "Bearer temporal"},
+        )
+        worker_read = client.get(
+            "/orchestration/temporal/workers",
+            headers={"Authorization": "Bearer temporal"},
+        )
+        admin_read = client.get(
+            "/orchestration/temporal/workers",
+            headers={"Authorization": "Bearer admin"},
+        )
+
+    assert rejected.status_code == 401
+    assert accepted.status_code == 200
+    assert accepted.json()["worker"]["tenant_id"] == "tenant_a"
+    assert worker_read.status_code == 403
+    assert admin_read.status_code == 200
+    assert admin_read.json()["workers"][0]["worker_id"] == "temporal-api-1"
+
+
 def test_orchestrator_identity_is_tenant_bound_and_activity_limited(monkeypatch):
     monkeypatch.setenv("MEDIAFORGE_AUTH_MODE", "required")
     monkeypatch.setenv(
@@ -337,6 +454,11 @@ def test_orchestrator_identity_is_tenant_bound_and_activity_limited(monkeypatch)
         principal,
         method="POST",
         path="/projects/project_a/export",
+    )
+    auth.authorize(
+        principal,
+        method="POST",
+        path="/orchestration/temporal/workers/heartbeat",
     )
     with pytest.raises(AuthenticationError, match="restricted"):
         auth.authorize(

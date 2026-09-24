@@ -16,6 +16,8 @@ data:
   MEDIAFORGE_TEMPORAL_TLS: {{ .Values.temporal.tls | quote }}
   MEDIAFORGE_TEMPORAL_ACTIVITY_TIMEOUT_SECONDS: {{ .Values.temporal.activityTimeoutSeconds | quote }}
   MEDIAFORGE_TEMPORAL_RETRY_MAX_ATTEMPTS: {{ .Values.temporal.retryMaxAttempts | quote }}
+  MEDIAFORGE_TEMPORAL_WORKER_HEARTBEAT_SECONDS: {{ .Values.temporal.workerHeartbeatSeconds | quote }}
+  MEDIAFORGE_TEMPORAL_WORKER_STALE_AFTER_SECONDS: {{ .Values.temporal.workerStaleAfterSeconds | quote }}
   {{- with .Values.temporal.clientCertFile }}
   MEDIAFORGE_TEMPORAL_CLIENT_CERT_FILE: {{ . | quote }}
   {{- end }}

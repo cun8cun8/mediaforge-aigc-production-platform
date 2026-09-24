@@ -321,6 +321,8 @@ $env:MEDIAFORGE_TEMPORAL_ADDRESS = "localhost:7233"
 $env:MEDIAFORGE_TEMPORAL_NAMESPACE = "default"
 $env:MEDIAFORGE_TEMPORAL_TASK_QUEUE = "mediaforge-orchestration"
 $env:MEDIAFORGE_TEMPORAL_CONTROL_PLANE_URL = "http://127.0.0.1:8020"
+$env:MEDIAFORGE_TEMPORAL_WORKER_HEARTBEAT_SECONDS = "20"
+$env:MEDIAFORGE_TEMPORAL_WORKER_STALE_AFTER_SECONDS = "75"
 ```
 
 Start a Temporal development server or connect to an approved Temporal Cloud
@@ -345,7 +347,9 @@ workflow index. Add `?refresh=true` to inspect known workflows at Temporal
 without creating new work. The Studio "编排" tab uses this index for status,
 inspection and cancellation. Configure the Worker token as a tenant-bound
 `orchestrator` API key; this service identity is limited to the four Activity
-paths and cannot access general Studio APIs.
+paths plus `POST /orchestration/temporal/workers/heartbeat`, and cannot access
+general Studio APIs. Use `GET /orchestration/temporal/workers` to verify that
+the target tenant has online queue consumers before submitting production work.
 
 For production, enable TLS and provide the client certificate, private key and
 server CA as protected files. Do not put Temporal credentials in source,

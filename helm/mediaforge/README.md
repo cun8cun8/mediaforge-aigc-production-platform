@@ -90,8 +90,12 @@ are ready. The `api-keys` Secret value must map that token to
 `{"subject":"temporal-worker","role":"orchestrator","tenant_id":"<tenant>"}`.
 The `orchestrator` identity cannot access Studio or general project APIs: it is
 restricted to generation submission, export, packaging, and dispatch Activity
-paths for its tenant. The Worker readiness probe checks Temporal and the active
-MediaForge control plane without submitting media work.
+paths and Worker heartbeat registration for its tenant. The Worker readiness
+probe checks Temporal and the active MediaForge control plane without submitting
+media work. Tune `temporal.workerHeartbeatSeconds` and
+`temporal.workerStaleAfterSeconds` together; the stale interval must be greater
+than the heartbeat interval. The Deployment uses the Kubernetes Pod name as its
+Worker ID and reports the chart application version with every heartbeat.
 
 ## Guardrails
 

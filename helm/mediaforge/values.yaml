@@ -149,6 +149,8 @@ temporal:
   serverCaFile: ""
   activityTimeoutSeconds: 3600
   retryMaxAttempts: 3
+  workerHeartbeatSeconds: 20
+  workerStaleAfterSeconds: 75
   worker:
     replicaCount: 1
     controlPlaneTokenSecretKey: temporal-worker-token
