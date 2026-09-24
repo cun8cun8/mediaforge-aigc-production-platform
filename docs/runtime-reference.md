@@ -163,6 +163,11 @@ GET  /orchestration/temporal/workers
 POST /orchestration/temporal/workers/heartbeat
 POST /orchestration/temporal/probe
 GET  /delivery/status
+
+交付状态中的 `production_ready` 表示分发边界已满足生产要求。`file://` 目标必须位于
+`MEDIAFORGE_DELIVERY_FILE_ROOT`；HTTP(S) 目标必须命中
+`MEDIAFORGE_DELIVERY_ALLOWED_HOSTS`，并配置 `MEDIAFORGE_DELIVERY_SECRET`。未满足时本地
+闭环仍可运行，但 `/ops/readiness` 会将交付标记为阻断项。
 GET  /quality/status
 GET  /speech/status
 GET  /ops/readiness

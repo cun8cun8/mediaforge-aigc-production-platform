@@ -680,3 +680,18 @@ def test_rate_limit_returns_retry_headers_and_isolates_anonymous_clients(tmp_pat
         assert int(rejected.headers["X-RateLimit-Reset"]) > 0
     with TestClient(app, client=("client-b", 1001)) as second:
         assert second.get("/health").status_code == 200
+
+
+def test_http_responses_include_trace_and_security_headers(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEDIAFORGE_AUTH_MODE", "disabled")
+    with TestClient(create_app(output_root=tmp_path)) as client:
+        response = client.get("/livez", headers={"X-Request-ID": "acceptance.trace-01"})
+        assert response.status_code == 200
+        assert response.headers["X-Request-ID"] == "acceptance.trace-01"
+        assert response.headers["X-Content-Type-Options"] == "nosniff"
+        assert response.headers["Referrer-Policy"] == "no-referrer"
+        assert response.headers["X-Frame-Options"] == "DENY"
+        assert response.headers["Permissions-Policy"] == "camera=(), geolocation=(), microphone=()"
+
+        generated = client.get("/livez", headers={"X-Request-ID": "invalid id"})
+        assert generated.headers["X-Request-ID"].startswith("req_")

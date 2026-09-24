@@ -21,7 +21,7 @@ from mediaforge_p1.comfyui import (
     ComfyWorkflowDefinition,
 )
 from mediaforge_p1.comfyui_preflight import preflight_comfyui_registry
-from mediaforge_p1.delivery import DeliveryDispatcher
+from mediaforge_p1.delivery import DeliveryDispatchError, DeliveryDispatcher
 from mediaforge_p1.enterprise_runtime import (
     BillingLedger,
     ObjectStorage,
@@ -103,6 +103,13 @@ def test_enterprise_runtime_adapters_are_durable_and_idempotent(tmp_path: Path) 
     assert (tmp_path / "objects" / "objects" / "tenant_a" / "project_001" / "file.bin").is_file()
     with pytest.raises(ValueError):
         ObjectStorage(tmp_path / "objects").put(source, "../escape.bin")
+
+
+def test_rate_limiter_rejects_invalid_configuration(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="between"):
+        SlidingWindowRateLimiter(tmp_path / "rate-limit.sqlite3", limit=0)
+    with pytest.raises(ValueError, match="between"):
+        SlidingWindowRateLimiter(tmp_path / "rate-limit.sqlite3", window_seconds=0)
 
 
 def test_sqlite_rate_limit_is_atomic_under_concurrency(tmp_path: Path) -> None:
@@ -483,6 +490,34 @@ def test_http_delivery_dispatch_sends_signed_package(tmp_path: Path) -> None:
     assert received[0]["body"] == b"http-package"
     assert received[0]["signature"]
     assert received[0]["sha256"] == result.package_sha256
+
+
+def test_delivery_targets_are_bounded_by_explicit_policy(tmp_path: Path) -> None:
+    package = tmp_path / "delivery.zip"
+    package.write_bytes(b"bounded-package")
+    dispatcher = DeliveryDispatcher(
+        tmp_path / "artifacts",
+        mode="file",
+        file_root=tmp_path / "allowed",
+    )
+    dispatcher.dispatch(
+        package,
+        project_id="bounded",
+        release_id="release",
+        channel="archive",
+        recipient="qa",
+        destination_uri=(tmp_path / "allowed" / "out.zip").resolve().as_uri(),
+    )
+    assert (tmp_path / "allowed" / "out.zip").is_file()
+    with pytest.raises(DeliveryDispatchError, match="inside"):
+        dispatcher.dispatch(
+            package,
+            project_id="bounded",
+            release_id="release",
+            channel="archive",
+            recipient="qa",
+            destination_uri=(tmp_path / "outside.zip").resolve().as_uri(),
+        )
 
 
 def test_service_prefers_provider_supported_capability(tmp_path: Path) -> None:

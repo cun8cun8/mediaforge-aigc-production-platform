@@ -1316,12 +1316,14 @@ class MediaForgeService:
             },
             {
                 "code": "delivery",
-                "passed": bool(delivery.get("configured")),
+                "passed": bool(
+                    delivery.get("production_ready", delivery.get("configured"))
+                ),
                 "blocking": True,
                 "message": (
-                    "Delivery dispatcher is configured."
-                    if delivery.get("configured")
-                    else "Delivery dispatcher is disabled."
+                    "Delivery dispatcher is configured with protected targets."
+                    if delivery.get("production_ready", delivery.get("configured"))
+                    else "Delivery dispatcher needs a target allowlist and HTTP signature before production use."
                 ),
             },
             {

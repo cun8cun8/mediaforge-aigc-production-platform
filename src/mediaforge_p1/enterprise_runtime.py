@@ -41,9 +41,17 @@ class SlidingWindowRateLimiter:
     """Process-local limiter with a durable SQLite backend available to every API worker."""
 
     def __init__(self, path: Path, *, limit: int = 120, window_seconds: int = 60) -> None:
+        if isinstance(limit, bool) or not 1 <= int(limit) <= 10_000_000:
+            raise EnterpriseConfigurationError(
+                "rate limit must be between 1 and 10000000 requests"
+            )
+        if isinstance(window_seconds, bool) or not 1 <= int(window_seconds) <= 86_400:
+            raise EnterpriseConfigurationError(
+                "rate limit window must be between 1 and 86400 seconds"
+            )
         self.path = path
-        self.limit = max(int(limit), 1)
-        self.window_seconds = max(int(window_seconds), 1)
+        self.limit = int(limit)
+        self.window_seconds = int(window_seconds)
         self._lock = threading.RLock()
         self._windows: dict[str, deque[float]] = defaultdict(deque)
 

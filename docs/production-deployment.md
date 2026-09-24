@@ -338,6 +338,10 @@ PKCE state 和会话保存在当前进程内存；`MEDIAFORGE_CONTROL_PLANE_MODE
 交付接口 `/projects/{id}/deliveries/dispatch` 在配置 S3/MinIO 后会先归档经过校验的
 交付包，再分发交付。对象以租户、项目和发布版本分目录；对象地址、SHA-256 和大小
 进入交付回执并持久化。上传失败不会产生成功交付回执。媒体制作仍使用本地工作目录，
+使用 `file://` 分发时必须将目标限制在 `MEDIAFORGE_DELIVERY_FILE_ROOT`；使用 HTTP(S)
+分发时必须配置 `MEDIAFORGE_DELIVERY_ALLOWED_HOSTS` 和 `MEDIAFORGE_DELIVERY_SECRET`。
+运行时会拒绝带嵌入式用户名/密码的 URL，并在 `/ops/readiness` 中将未受保护的 HTTP
+分发标记为生产阻断项。
 对象存储不是所有媒体接口的透明替代品。
 
 使用 PostgreSQL 状态后端时配置：

@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 from contextlib import asynccontextmanager
 from time import perf_counter
 from pathlib import Path
@@ -57,6 +58,16 @@ from .temporal_orchestration import (
     TemporalOperationRequest,
     TemporalOrchestrationError,
 )
+
+
+_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+
+
+def _request_id(request: Request) -> str:
+    candidate = request.headers.get("X-Request-ID", "").strip()
+    if _REQUEST_ID_PATTERN.fullmatch(candidate):
+        return candidate
+    return f"req_{uuid4().hex}"
 
 
 class ReviewRequest(BaseModel):
@@ -774,12 +785,26 @@ def create_app(output_root: Path | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def prevent_stale_studio_assets(request: Request, call_next):
+        request.state.request_id = _request_id(request)
         response = await call_next(request)
         path = request.url.path.lower()
         if path == "/" or path.endswith((".html", ".css", ".js")):
             response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
             response.headers["Pragma"] = "no-cache"
             response.headers["Expires"] = "0"
+        response.headers.setdefault("X-Request-ID", request.state.request_id)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault(
+            "Permissions-Policy",
+            "camera=(), geolocation=(), microphone=()",
+        )
+        if request.url.scheme == "https":
+            response.headers.setdefault(
+                "Strict-Transport-Security",
+                "max-age=31536000; includeSubDomains",
+            )
         return response
 
     def is_public_path(path: str, method: str) -> bool:

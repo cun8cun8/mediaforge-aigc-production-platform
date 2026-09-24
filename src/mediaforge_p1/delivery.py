@@ -55,12 +55,20 @@ class DeliveryDispatcher:
         timeout_seconds: float = 30.0,
         retries: int = 2,
         secret: str = "",
+        file_root: Path | None = None,
+        allowed_hosts: set[str] | frozenset[str] | None = None,
     ) -> None:
         self.output_root = output_root
         self.mode = mode.strip().lower() or "local"
         self.timeout_seconds = max(float(timeout_seconds), 1.0)
         self.retries = max(int(retries), 0)
         self.secret = secret
+        self.file_root = file_root.resolve() if file_root is not None else None
+        self.allowed_hosts = frozenset(
+            str(host).strip().lower()
+            for host in (allowed_hosts or set())
+            if str(host).strip()
+        )
 
     @classmethod
     def from_env(cls, output_root: Path) -> "DeliveryDispatcher":
@@ -74,12 +82,23 @@ class DeliveryDispatcher:
             retries = int(os.getenv("MEDIAFORGE_DELIVERY_RETRIES", "2"))
         except ValueError as exc:
             raise ValueError("MEDIAFORGE_DELIVERY_RETRIES must be an integer") from exc
+        allowed_hosts = {
+            item.strip().lower()
+            for item in os.getenv("MEDIAFORGE_DELIVERY_ALLOWED_HOSTS", "").split(",")
+            if item.strip()
+        }
+        file_root_value = os.getenv(
+            "MEDIAFORGE_DELIVERY_FILE_ROOT",
+            str(output_root / "delivery-out"),
+        ).strip()
         return cls(
             output_root,
             mode=os.getenv("MEDIAFORGE_DELIVERY_MODE", "local"),
             timeout_seconds=timeout,
             retries=retries,
             secret=os.getenv("MEDIAFORGE_DELIVERY_SECRET", ""),
+            file_root=Path(file_root_value) if file_root_value else None,
+            allowed_hosts=allowed_hosts,
         )
 
     def status_view(self) -> dict[str, object]:
@@ -89,6 +108,15 @@ class DeliveryDispatcher:
             "retries": self.retries,
             "configured": self.mode != "disabled",
             "http_signature": bool(self.secret),
+            "allowed_hosts": sorted(self.allowed_hosts),
+            "file_root": str(self.file_root) if self.file_root else None,
+            "production_ready": (
+                self.mode != "disabled"
+                and (
+                    self.mode not in {"http", "https"}
+                    or bool(self.secret and self.allowed_hosts)
+                )
+            ),
             "supported_targets": ["local", "file", "http", "https"],
         }
 
@@ -142,6 +170,14 @@ class DeliveryDispatcher:
                 package_size=package_size,
             )
         if scheme in {"http", "https"}:
+            if parsed.username or parsed.password or not parsed.hostname:
+                raise DeliveryDispatchError(
+                    "HTTP delivery destination must include a hostname without embedded credentials"
+                )
+            if self.allowed_hosts and parsed.hostname.lower() not in self.allowed_hosts:
+                raise DeliveryDispatchError(
+                    f"HTTP delivery host is not allowed: {parsed.hostname}"
+                )
             return self._dispatch_http(
                 package,
                 delivery_id=delivery_id,
@@ -228,6 +264,15 @@ class DeliveryDispatcher:
             target = Path(f"//{parsed.netloc}{raw_path}")
         if target.suffix.lower() != ".zip":
             target = target / package.name
+        if self.file_root is not None:
+            root = self.file_root.resolve()
+            target = target.resolve()
+            try:
+                target.relative_to(root)
+            except ValueError as exc:
+                raise DeliveryDispatchError(
+                    "file delivery destination must be inside MEDIAFORGE_DELIVERY_FILE_ROOT"
+                ) from exc
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(package, target)
         return DeliveryDispatchResult(

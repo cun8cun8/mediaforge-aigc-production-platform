@@ -273,7 +273,7 @@ Browser SSO additionally needs authorization code + PKCE endpoints and a public 
 | Workflow rights | `MEDIAFORGE_LICENSE_REGISTRY_PATH` or registry sync | License registry validation |
 | Audit anchor | `MEDIAFORGE_AUDIT_ANCHOR_MODE=object_lock` or `http` | External receipt and read-back verification |
 | C2PA | signer and verifier command variables | Signed and independently verified state |
-| Delivery | `MEDIAFORGE_DELIVERY_MODE` and optional secret | Dispatch receipt and delivery package verification |
+| Delivery | `MEDIAFORGE_DELIVERY_MODE`, `MEDIAFORGE_DELIVERY_FILE_ROOT`, `MEDIAFORGE_DELIVERY_ALLOWED_HOSTS` and HTTP secret | Dispatch receipt, target-bound delivery and package verification |
 
 The Prometheus, Alertmanager and Grafana overlay is `docker-compose.observability.yml`. Keep monitoring tokens in `ops/secrets/` or a proper secret store, never in a Compose file or GitHub Actions log.
 
