@@ -333,6 +333,7 @@ POST /projects/{id}/release
 POST /projects/{id}/deliveries
 POST /projects/{id}/deliveries/dispatch
 GET /providers/status
+GET /providers/catalog
 GET /providers/health
 GET /providers/diagnostics
 GET /governance/license-registry
@@ -409,7 +410,9 @@ $env:MEDIAFORGE_PROVIDERS = "comfyui,replicate,mock"
 ```
 
 The singular setting remains supported and is used when the pool setting is
-absent. `/providers/status`, `/providers/health`, and `/providers/diagnostics`
+absent. `/providers/catalog` describes the supported open-source and cloud
+engine boundaries without exposing credentials. `/providers/status`,
+`/providers/health`, and `/providers/diagnostics`
 return both the effective provider and the complete routing pool.
 
 When using `comfyui`, also set `COMFYUI_BASE_URL` and
@@ -466,6 +469,13 @@ command receives a JSON generation request on stdin and through
 as a readable PNG or MP4. Configure capabilities, timeout, health and warmup
 with the `MEDIAFORGE_LOCAL_PROVIDER_*` variables. `POST /providers/warmup`
 runs explicit warmup hooks and requires an admin role.
+
+When using `diffsynth`, configure `MEDIAFORGE_DIFFSYNTH_COMMAND` and its
+capability, timeout, health and warmup variables. The DiffSynth launcher uses
+the same artifact contract with a dedicated
+`mediaforge-diffsynth-provider-request-v1` schema, so model-specific code
+remains outside the control plane while routing, quality and governance stay
+consistent.
 
 Lip-sync is an explicit post-production adapter. Configure
 `MEDIAFORGE_LIPSYNC_MODE=command` with `MEDIAFORGE_LIPSYNC_COMMAND` for a local

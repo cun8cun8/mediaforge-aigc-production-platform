@@ -16,6 +16,7 @@ inside the project state machine.
 | [c2pa-rs](https://github.com/contentauth/c2pa-rs) / C2PA Tool | Content credentials | Compatible external signer/verifier boundary | Isolated signing service and independent verification; do not invent a proprietary credential format |
 | [Temporal](https://github.com/temporalio/temporal) | Long-running distributed orchestration | Integrated as an optional orchestration boundary | API starts durable generation, rendering, packaging or dispatch workflows; Activities call the existing control plane, while native leases remain the fallback |
 | [Yjs](https://github.com/yjs/yjs) | Browser text/timeline collaboration | Deferred, deliberate migration candidate | Replace only editor document synchronization; preserve MediaForge authorization, locks, approvals and audit events |
+| [DiffSynth-Studio](https://github.com/modelscope/DiffSynth-Studio) | Low-VRAM image/video/audio model execution | Integrated as an optional GPU Provider boundary | Reviewed launcher receives a versioned JSON request; MediaForge retains routing, quality, cost and governance receipts |
 | [Diffusers](https://github.com/huggingface/diffusers) | Local model execution | Provider implementation option | Expose it only through the `GenerationProvider` protocol with fixed model/version receipts |
 
 ## Why The Control Plane Remains Native

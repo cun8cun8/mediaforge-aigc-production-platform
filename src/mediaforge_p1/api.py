@@ -1672,6 +1672,10 @@ def create_app(output_root: Path | None = None) -> FastAPI:
     def provider_status() -> dict:
         return service.provider_status_view()
 
+    @app.get("/providers/catalog")
+    def provider_catalog() -> dict[str, Any]:
+        return service.provider_catalog()
+
     @app.get("/providers/health")
     def provider_health() -> dict:
         return service.provider_health()

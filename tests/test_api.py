@@ -234,6 +234,7 @@ def test_api_exposes_and_routes_a_multi_provider_pool(
     client = TestClient(create_app(output_root=tmp_path))
     service = client.app.state.mediaforge
     status = client.get("/providers/status")
+    catalog = client.get("/providers/catalog")
     diagnostics = client.get("/providers/diagnostics")
 
     assert status.status_code == 200
@@ -242,6 +243,11 @@ def test_api_exposes_and_routes_a_multi_provider_pool(
         "comfyui",
     ]
     assert len(service.router.registrations) == 2
+    assert catalog.status_code == 200
+    catalog_rows = {item["id"]: item for item in catalog.json()["providers"]}
+    assert catalog_rows["mock"]["configured"] is True
+    assert catalog_rows["comfyui"]["configured"] is True
+    assert catalog_rows["diffsynth"]["configured"] is False
     assert diagnostics.status_code == 200
     assert diagnostics.json()["providers"][0]["status"]["provider"] == "mock-provider"
     assert diagnostics.json()["health"]["configured_provider_count"] == 2

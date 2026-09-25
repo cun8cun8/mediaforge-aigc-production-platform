@@ -15387,6 +15387,129 @@ class MediaForgeService:
             payload["providers"] = copy.deepcopy(self.provider_statuses)
         return payload
 
+    def provider_catalog(self) -> dict[str, Any]:
+        """Describe supported engines and their current runtime state.
+
+        The catalog is intentionally metadata-only. It gives Studio and
+        automation a stable view of integration boundaries without exposing
+        provider secrets or forcing model-specific assumptions into routing.
+        """
+        definitions = [
+            {
+                "id": "mock",
+                "label": "MediaForge Mock",
+                "category": "simulation",
+                "source": "MediaForge",
+                "role": "确定性流程验证",
+                "capabilities": ["image_generation", "image_to_video"],
+                "execution": "in-process",
+                "production_supported": False,
+                "mode_aliases": ["mock"],
+            },
+            {
+                "id": "comfyui",
+                "label": "ComfyUI",
+                "category": "inference_engine",
+                "source": "Comfy-Org/ComfyUI",
+                "role": "审核后的节点工作流和本地 GPU 推理",
+                "capabilities": ["image_generation", "image_to_video"],
+                "execution": "HTTP workflow + queue",
+                "production_supported": True,
+                "mode_aliases": ["comfyui"],
+            },
+            {
+                "id": "diffsynth",
+                "label": "DiffSynth-Studio",
+                "category": "inference_engine",
+                "source": "modelscope/DiffSynth-Studio",
+                "role": "低显存模型推理、视频和音视频扩展",
+                "capabilities": ["image_generation", "image_to_video"],
+                "execution": "隔离 GPU launcher",
+                "production_supported": True,
+                "mode_aliases": ["diffsynth", "diffsynth-studio"],
+            },
+            {
+                "id": "replicate",
+                "label": "Replicate",
+                "category": "cloud_provider",
+                "source": "Replicate API",
+                "role": "版本固定的云端图生视频",
+                "capabilities": ["image_to_video"],
+                "execution": "version-pinned HTTP prediction",
+                "production_supported": True,
+                "mode_aliases": ["replicate"],
+            },
+            {
+                "id": "local",
+                "label": "自建 GPU Provider",
+                "category": "inference_engine",
+                "source": "MediaForge Provider contract",
+                "role": "组织自有模型或受控命令管线",
+                "capabilities": ["image_generation", "image_to_video"],
+                "execution": "签约命令 + Worker callback",
+                "production_supported": True,
+                "mode_aliases": ["local", "local-command"],
+            },
+        ]
+        statuses = self.provider_statuses or [self.provider_status]
+        health = self.provider_health()
+        health_rows = health.get("providers") or [health]
+        by_mode = {
+            str(row.get("mode") or "").lower(): row
+            for row in statuses
+            if isinstance(row, dict)
+        }
+        by_name = {
+            str(row.get("provider") or "").lower(): row
+            for row in statuses
+            if isinstance(row, dict)
+        }
+        health_by_name = {
+            str(row.get("provider") or "").lower(): row
+            for row in health_rows
+            if isinstance(row, dict)
+        }
+        rows: list[dict[str, Any]] = []
+        for definition in definitions:
+            status = next(
+                (
+                    by_mode.get(alias) or by_name.get(alias)
+                    for alias in definition["mode_aliases"]
+                    if by_mode.get(alias) or by_name.get(alias)
+                ),
+                None,
+            )
+            status = status or {}
+            provider_name = str(status.get("provider") or definition["id"])
+            health_row = health_by_name.get(provider_name.lower(), {})
+            rows.append(
+                {
+                    **{key: value for key, value in definition.items() if key != "mode_aliases"},
+                    "provider": provider_name,
+                    "mode": status.get("mode") or definition["id"],
+                    "configured": bool(status.get("configured")),
+                    "healthy": health_row.get("healthy"),
+                    "reachable": health_row.get("reachable"),
+                    "message": status.get("message") or (
+                        "未配置，保持可选"
+                    ),
+                    "runtime_capabilities": list(status.get("capabilities") or definition["capabilities"]),
+                    "details": copy.deepcopy(status.get("details") or {}),
+                }
+            )
+        return {
+            "schema_version": "mediaforge-provider-catalog-v1",
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "providers": rows,
+            "configured_count": sum(1 for row in rows if row["configured"]),
+            "healthy_count": sum(1 for row in rows if row["healthy"] is True),
+            "production_ready_count": sum(
+                1
+                for row in rows
+                if row["configured"] and row["healthy"] is True and row["production_supported"]
+            ),
+        }
+
     def _provider_health_for(
         self,
         provider: GenerationProvider,
@@ -15886,6 +16009,14 @@ class MediaForgeService:
                         "code": "CONFIGURE_LOCAL_PROVIDER",
                         "priority": "blocking",
                         "message": "Set MEDIAFORGE_LOCAL_PROVIDER_COMMAND and restart the service.",
+                    }
+                )
+            if mode in {"diffsynth", "diffsynth-studio"} and not details.get("command_configured"):
+                next_actions.append(
+                    {
+                        "code": "CONFIGURE_DIFFSYNTH_PROVIDER",
+                        "priority": "blocking",
+                        "message": "Set MEDIAFORGE_DIFFSYNTH_COMMAND to a reviewed DiffSynth launcher and restart the service.",
                     }
                 )
             if not next_actions:

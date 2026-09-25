@@ -10,7 +10,7 @@ from typing import Any, Sequence
 
 from .comfyui import ComfyUIProvider, ComfyWorkflowDefinition
 from .contracts import Capability, GenerationSpec
-from .providers import GenerationProvider, LocalCommandProvider, MockProvider
+from .providers import DiffSynthProvider, GenerationProvider, LocalCommandProvider, MockProvider
 from .replicate import ReplicateVideoProvider
 
 
@@ -605,6 +605,108 @@ def _build_provider_for_mode(mode: str) -> ProviderBundle:
             configured=True,
             message="Local GPU command Provider is configured.",
             capabilities=capabilities,
+            details=details,
+        )
+
+    if mode in {"diffsynth", "diffsynth-studio"}:
+        command = os.getenv("MEDIAFORGE_DIFFSYNTH_COMMAND", "").strip()
+        health_command = os.getenv("MEDIAFORGE_DIFFSYNTH_HEALTH_COMMAND", "").strip()
+        warmup_command = os.getenv("MEDIAFORGE_DIFFSYNTH_WARMUP_COMMAND", "").strip()
+        details = {
+            "engine": "DiffSynth-Studio",
+            "execution": "diffsynth-studio-command",
+            "command_configured": bool(command),
+            "health_command_configured": bool(health_command),
+            "warmup_command_configured": bool(warmup_command),
+            "model": os.getenv("MEDIAFORGE_DIFFSYNTH_MODEL", "").strip() or None,
+        }
+        try:
+            timeout_seconds = _env_float(
+                "MEDIAFORGE_DIFFSYNTH_TIMEOUT_SECONDS",
+                1800.0,
+                minimum=0,
+                inclusive=False,
+            )
+            estimated_cost = _env_float(
+                "MEDIAFORGE_DIFFSYNTH_ESTIMATED_COST",
+                0.0,
+                minimum=0,
+            )
+        except ValueError as exc:
+            reason = str(exc)
+            return ProviderBundle(
+                provider=UnavailableProvider(name="diffsynth", reason=reason, capabilities=[]),
+                mode=mode,
+                configured=False,
+                message=reason,
+                capabilities=[],
+                details=details,
+            )
+        raw_capabilities = os.getenv(
+            "MEDIAFORGE_DIFFSYNTH_CAPABILITIES",
+            "image_generation,image_to_video",
+        )
+        capabilities: list[Capability] = []
+        for value in raw_capabilities.split(","):
+            value = value.strip().lower()
+            if not value:
+                continue
+            try:
+                capability = Capability(value)
+            except ValueError:
+                reason = f"unsupported DiffSynth capability: {value}"
+                return ProviderBundle(
+                    provider=UnavailableProvider(name="diffsynth", reason=reason, capabilities=[]),
+                    mode=mode,
+                    configured=False,
+                    message=reason,
+                    capabilities=[],
+                    details=details,
+                )
+            if capability not in capabilities:
+                capabilities.append(capability)
+        details.update(
+            {
+                "timeout_seconds": timeout_seconds,
+                "estimated_cost": estimated_cost,
+                "capability_config": [item.value for item in capabilities],
+            }
+        )
+        if not command:
+            reason = "missing MEDIAFORGE_DIFFSYNTH_COMMAND"
+            return ProviderBundle(
+                provider=UnavailableProvider(name="diffsynth", reason=reason, capabilities=capabilities),
+                mode=mode,
+                configured=False,
+                message=reason,
+                capabilities=capabilities,
+                details=details,
+            )
+        try:
+            provider = DiffSynthProvider(
+                command=command,
+                capabilities=set(capabilities),
+                timeout_seconds=timeout_seconds,
+                estimated_cost=estimated_cost,
+                health_command=health_command,
+                warmup_command=warmup_command,
+            )
+        except ValueError as exc:
+            reason = str(exc)
+            return ProviderBundle(
+                provider=UnavailableProvider(name="diffsynth", reason=reason, capabilities=capabilities),
+                mode=mode,
+                configured=False,
+                message=reason,
+                capabilities=capabilities,
+                details=details,
+            )
+        return ProviderBundle(
+            provider=provider,
+            mode=mode,
+            configured=True,
+            message="DiffSynth-Studio GPU Provider is configured.",
+            capabilities=[item.value for item in capabilities],
             details=details,
         )
 

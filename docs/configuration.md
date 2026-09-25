@@ -185,6 +185,30 @@ POST /projects/{project_id}/jobs/{job_id}/callback
 
 The signature covers timestamp, HTTP method, request path and raw JSON body. Workers can use the built-in callback implementation in `mediaforge_p1.worker`; custom integrations must use the same canonical algorithm. Check configuration with `GET /providers/callback-security`.
 
+### DiffSynth-Studio GPU Provider
+
+DiffSynth-Studio is integrated through the same isolated command boundary as a
+local GPU Provider. This keeps model-specific pipelines outside the API
+control plane while preserving capability routing, cost estimates, artifact
+hashes, quality gates and audit receipts. The launcher reads one JSON request
+from stdin and must create the declared `MEDIAFORGE_OUTPUT_PATH` as a valid
+PNG or MP4 before exiting with status zero.
+
+```powershell
+$env:MEDIAFORGE_PROVIDERS = "diffsynth,comfyui,replicate"
+$env:MEDIAFORGE_DIFFSYNTH_COMMAND = "python D:\secure-config\run_diffsynth_provider.py"
+$env:MEDIAFORGE_DIFFSYNTH_CAPABILITIES = "image_generation,image_to_video"
+$env:MEDIAFORGE_DIFFSYNTH_MODEL = "Wan2.2"
+$env:MEDIAFORGE_DIFFSYNTH_TIMEOUT_SECONDS = "1800"
+$env:MEDIAFORGE_DIFFSYNTH_HEALTH_COMMAND = "python D:\secure-config\check_diffsynth.py"
+$env:MEDIAFORGE_DIFFSYNTH_WARMUP_COMMAND = "python D:\secure-config\warmup_diffsynth.py"
+```
+
+The launcher is intentionally site-owned because DiffSynth model entry points,
+weights and GPU requirements vary by deployment. It must not write project
+state directly. Check `/providers/catalog`, `/providers/diagnostics` and
+`/providers/contracts` before allowing the provider into production routing.
+
 ## Provider Probe Evidence
 
 A real Provider Probe is an explicit, cost-bearing release activity. It never

@@ -24,6 +24,7 @@ const state = {
   retrospective: null,
   providerStatus: null,
   providerDiagnostics: null,
+  providerCatalog: null,
   providerOperations: [],
   providerContract: null,
   lipsyncStatus: null,
@@ -1014,7 +1015,31 @@ function renderProviderCenter() {
     : `<div class="policy-row"><strong>暂无处理建议</strong><span>当前没有额外的服务商操作。</span></div>`;
   renderProviderRecovery(circuits);
   renderProviderOperations();
+  renderProviderCatalog();
   renderProviderContract();
+}
+
+function renderProviderCatalog() {
+  const catalog = state.providerCatalog;
+  const rows = catalog?.providers || [];
+  $("providerCatalogCount").textContent = `${rows.length} 个`;
+  const capabilityLabels = {image_generation: "图像生成", image_to_video: "图生视频"};
+  $("providerCatalogList").innerHTML = rows.length
+    ? rows.map((provider) => {
+      const stateLabel = provider.configured
+        ? (provider.healthy === true ? "健康" : provider.healthy === false ? "不可用" : "已配置")
+        : "未配置";
+      const tone = provider.healthy === true && provider.configured
+        ? "is-passed"
+        : provider.configured ? "is-warning" : "";
+      const capabilities = (provider.runtime_capabilities || provider.capabilities || [])
+        .map((capability) => capabilityLabels[capability] || capability).join("、");
+      return `<div class="policy-row ${tone}">
+        <strong><span class="policy-dot"></span>${escapeHtml(provider.label)} · ${escapeHtml(stateLabel)}</strong>
+        <span>${escapeHtml(provider.role)} · ${escapeHtml(capabilities || "暂无能力")} · ${escapeHtml(provider.execution)}</span>
+      </div>`;
+    }).join("")
+    : `<div class="policy-row"><strong>服务商目录尚未加载</strong><span>运行一次诊断以读取可选引擎和当前状态。</span></div>`;
 }
 
 function renderProviderRecovery(circuits) {
@@ -3975,10 +4000,14 @@ async function checkProviderHealth() {
   buttons.forEach((button) => setBusy(button, true, "检查中"));
   setActiveTab("providers");
   try {
-    const diagnostics = await request("/providers/diagnostics");
+    const [diagnostics, catalog] = await Promise.all([
+      request("/providers/diagnostics"),
+      request("/providers/catalog"),
+    ]);
     const health = diagnostics.health;
     state.providerStatus = diagnostics.status;
     state.providerDiagnostics = diagnostics;
+    state.providerCatalog = catalog;
     await loadProviderOperations();
     renderProviderCenter();
     const label = health.healthy

@@ -59,8 +59,7 @@ from mediaforge_p1.media import (
     sha256_file,
     write_srt,
 )
-from mediaforge_p1.providers import MockProvider
-from mediaforge_p1.providers import LocalCommandProvider
+from mediaforge_p1.providers import DiffSynthProvider, LocalCommandProvider, MockProvider
 from mediaforge_p1.lipsync import LipSyncAdapter, LipSyncSettings, LipSyncError
 from mediaforge_p1.service import MediaForgeService
 from mediaforge_p1.router import (
@@ -1588,6 +1587,37 @@ def test_local_provider_generates_contract_artifact(tmp_path: Path, monkeypatch)
     assert artifact.kind == "image"
     assert probe_image(Path(artifact.uri)).valid
     assert Path(artifact.metadata_uri).is_file()
+
+
+def test_diffsynth_provider_uses_isolated_contract(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("MEDIAFORGE_PROVIDER", "diffsynth")
+    monkeypatch.setenv("MEDIAFORGE_DIFFSYNTH_COMMAND", "python run_diffsynth.py")
+    monkeypatch.setenv("MEDIAFORGE_DIFFSYNTH_MODEL", "Wan2.2")
+
+    bundle = build_provider_from_env()
+
+    assert bundle.configured is True
+    assert isinstance(bundle.provider, DiffSynthProvider)
+    assert bundle.provider.name == "diffsynth"
+    assert bundle.details["engine"] == "DiffSynth-Studio"
+    assert bundle.details["model"] == "Wan2.2"
+    assert bundle.provider.request_schema == "mediaforge-diffsynth-provider-request-v1"
+
+    def fake_run(*_args, **kwargs):
+        output = Path(kwargs["env"]["MEDIAFORGE_OUTPUT_PATH"])
+        Image.new("RGB", (32, 18), "#345").save(output, format="PNG")
+        return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("mediaforge_p1.providers.subprocess.run", fake_run)
+    spec = make_spec("shot_diffsynth", Capability.IMAGE_GENERATION).model_copy(
+        update={"project_id": "diffsynth_project"}
+    )
+    artifact = bundle.provider.generate(spec, job_id="job_diffsynth", output_dir=tmp_path)
+
+    assert artifact.kind == "image"
+    metadata = json.loads(Path(artifact.metadata_uri).read_text(encoding="utf-8"))
+    assert metadata["provider"] == "diffsynth"
+    assert metadata["execution"] == "diffsynth-studio-command"
 
 
 def test_http_lipsync_requires_opt_in_and_accepts_valid_output(tmp_path: Path, monkeypatch) -> None:

@@ -55,7 +55,7 @@ class LocalCommandProvider:
 
     name = "local-gpu-command"
 
-    def __init__(self, *, command: str, capabilities: set[Capability], timeout_seconds: float, estimated_cost: float = 0.0, health_command: str = "", warmup_command: str = "") -> None:
+    def __init__(self, *, command: str, capabilities: set[Capability], timeout_seconds: float, estimated_cost: float = 0.0, health_command: str = "", warmup_command: str = "", request_schema: str = "mediaforge-local-provider-request-v1", execution_name: str = "local-gpu-command") -> None:
         _command_args(command)
         self.command = command
         self._capabilities = capabilities
@@ -63,6 +63,8 @@ class LocalCommandProvider:
         self.estimated_cost = estimated_cost
         self.health_command = health_command
         self.warmup_command = warmup_command
+        self.request_schema = request_schema
+        self.execution_name = execution_name
 
     def supports(self, capability: Capability) -> bool:
         return capability in self._capabilities
@@ -99,7 +101,7 @@ class LocalCommandProvider:
         artifact_id = f"artifact_{uuid4().hex[:12]}"
         suffix = ".png" if capability == Capability.IMAGE_GENERATION else ".mp4"
         path = output_dir / f"{artifact_id}{suffix}"
-        payload = {"schema_version": "mediaforge-local-provider-request-v1", "job_id": job_id, "output_path": str(path), "spec": spec.model_dump(mode="json")}
+        payload = {"schema_version": self.request_schema, "job_id": job_id, "output_path": str(path), "spec": spec.model_dump(mode="json")}
         env = os.environ.copy()
         env.update({"MEDIAFORGE_OUTPUT_PATH": str(path), "MEDIAFORGE_JOB_ID": job_id, "MEDIAFORGE_REQUEST_CAPABILITY": capability.value})
         try:
@@ -114,8 +116,27 @@ class LocalCommandProvider:
         if not probe.valid:
             raise RuntimeError(f"local Provider output is not readable media: {probe.error or 'invalid media'}")
         metadata_path = output_dir / f"{artifact_id}.json"
-        metadata_path.write_text(json.dumps({"schema_version": "mediaforge-artifact-metadata-v1", "provider": self.name, "job_id": job_id, "spec": spec.model_dump(mode="json"), "execution": "local-gpu-command"}, ensure_ascii=True, indent=2), encoding="utf-8")
+        metadata_path.write_text(json.dumps({"schema_version": "mediaforge-artifact-metadata-v1", "provider": self.name, "job_id": job_id, "spec": spec.model_dump(mode="json"), "execution": self.execution_name}, ensure_ascii=True, indent=2), encoding="utf-8")
         return Artifact(artifact_id=artifact_id, job_id=job_id, kind="image" if capability == Capability.IMAGE_GENERATION else "video", uri=str(path), mime_type="image/png" if capability == Capability.IMAGE_GENERATION else "video/mp4", sha256=sha256_file(path), size_bytes=path.stat().st_size, duration_seconds=probe.duration_seconds, metadata_uri=str(metadata_path), created_at=datetime.now(timezone.utc))
+
+
+class DiffSynthProvider(LocalCommandProvider):
+    """Run a reviewed DiffSynth-Studio launcher as an isolated GPU Provider.
+
+    DiffSynth changes model entry points frequently, so MediaForge owns only a
+    stable JSON/stdout boundary. The launcher can use DiffSynth directly,
+    ComfyUI nodes, or a site-specific wrapper without coupling the control
+    plane to model internals.
+    """
+
+    name = "diffsynth"
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(
+            request_schema="mediaforge-diffsynth-provider-request-v1",
+            execution_name="diffsynth-studio-command",
+            **kwargs,
+        )
 
 class MockProvider:
     """Deterministic provider used to validate platform contracts."""
