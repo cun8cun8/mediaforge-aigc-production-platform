@@ -2992,6 +2992,7 @@ def test_webhook_outbox_keeps_failed_events_for_restart_replay(
     persisted = json.loads(outbox_path.read_text(encoding="utf-8"))
     assert dispatcher.status_view()["pending"] == 1
     assert len(persisted["events"]) == 1
+    assert dispatcher.retry_pending() == 1
 
     recovered = WebhookDispatcher()
     recovered.configure_outbox(outbox_path)

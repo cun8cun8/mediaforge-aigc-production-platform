@@ -146,6 +146,10 @@ GET  /providers/callback-security
 GET  /llm/status
 GET  /planning/status
 GET  /webhooks/status
+
+Webhook 和 SIEM outbox 的失败事件会持久化，并由 API 后台按
+`MEDIAFORGE_WEBHOOK_RETRY_INTERVAL_SECONDS` 周期重新调度；HTTP 3xx 重定向不会被跟随，
+避免签名或 Bearer 凭据被转发到未预期的目标。
 GET  /auth/status
 GET  /auth/login
 GET  /auth/callback

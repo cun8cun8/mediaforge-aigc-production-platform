@@ -12,8 +12,13 @@ from time import sleep, time
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 from uuid import uuid4
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: N802
+        return None
 
 
 @dataclass
@@ -199,6 +204,14 @@ class WebhookDispatcher:
             self._persist_outbox_locked()
         self._dispatch(payload)
 
+    def retry_pending(self) -> int:
+        """Schedule durable failures again without requiring an API restart."""
+        with self._lock:
+            pending = list(self._pending.values())
+        for payload in pending:
+            self._dispatch(payload)
+        return len(pending)
+
     def _dispatch(self, payload: dict[str, Any]) -> None:
         if not self.urls:
             return
@@ -226,6 +239,7 @@ class WebhookDispatcher:
                 hashlib.sha256,
             ).hexdigest()
         failures: list[str] = []
+        opener = build_opener(_NoRedirect())
         for url in self.urls:
             headers = {
                 "Accept": "application/json",
@@ -244,7 +258,7 @@ class WebhookDispatcher:
                 request = Request(url, data=body, headers=headers, method="POST")
                 retryable = False
                 try:
-                    with urlopen(request, timeout=self.timeout_seconds) as response:
+                    with opener.open(request, timeout=self.timeout_seconds) as response:
                         response_status = int(response.status)
                         if 200 <= response_status < 300:
                             delivered = True

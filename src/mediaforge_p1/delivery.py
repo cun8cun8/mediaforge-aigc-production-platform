@@ -10,12 +10,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 from uuid import uuid4
 
 
 class DeliveryDispatchError(RuntimeError):
     pass
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: N802
+        return None
 
 
 @dataclass(frozen=True)
@@ -323,10 +328,11 @@ class DeliveryDispatcher:
                 hashlib.sha256,
             ).hexdigest()
         last_error: Exception | None = None
+        opener = build_opener(_NoRedirect())
         for attempt in range(self.retries + 1):
             try:
                 request = Request(destination, data=body, headers=headers, method="POST")
-                with urlopen(request, timeout=self.timeout_seconds) as response:
+                with opener.open(request, timeout=self.timeout_seconds) as response:
                     response_body = response.read(4000).decode("utf-8", errors="replace")
                     return DeliveryDispatchResult(
                         delivery_id=delivery_id,

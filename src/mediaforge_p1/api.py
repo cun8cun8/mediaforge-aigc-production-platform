@@ -663,7 +663,7 @@ class TimelineExportRequest(BaseModel):
 @asynccontextmanager
 async def app_lifespan(app: FastAPI):
     scheduler = app.state.registry_sync_scheduler
-    task = None
+    tasks: list[asyncio.Task] = []
     if scheduler["enabled"]:
         async def run_registry_sync() -> None:
             scheduler["running"] = True
@@ -688,11 +688,34 @@ async def app_lifespan(app: FastAPI):
                 scheduler["running"] = False
 
         task = asyncio.create_task(run_registry_sync())
+        tasks.append(task)
         app.state.registry_sync_task = task
+    retry_interval = app.state.webhook_retry_interval_seconds
+    webhook_configured = (
+        app.state.mediaforge.webhook_status().get("configured")
+        or app.state.mediaforge.siem_status().get("configured")
+    )
+    if retry_interval and webhook_configured:
+        async def run_webhook_retries() -> None:
+            while True:
+                await asyncio.sleep(retry_interval)
+                for dispatcher in (
+                    app.state.mediaforge.webhooks,
+                    app.state.mediaforge.siem,
+                ):
+                    try:
+                        await asyncio.to_thread(dispatcher.retry_pending)
+                    except Exception:
+                        # The durable outbox remains intact; the next interval retries again.
+                        continue
+
+        retry_task = asyncio.create_task(run_webhook_retries())
+        tasks.append(retry_task)
+        app.state.webhook_retry_task = retry_task
     try:
         yield
     finally:
-        if task is not None:
+        for task in tasks:
             task.cancel()
             try:
                 await task
@@ -731,6 +754,18 @@ def create_app(output_root: Path | None = None) -> FastAPI:
     if registry_sync_interval < 0 or (0 < registry_sync_interval < 30):
         raise ValueError(
             "MEDIAFORGE_LICENSE_REGISTRY_SYNC_INTERVAL_SECONDS must be 0 or at least 30"
+        )
+    try:
+        webhook_retry_interval = float(
+            os.getenv("MEDIAFORGE_WEBHOOK_RETRY_INTERVAL_SECONDS", "30")
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "MEDIAFORGE_WEBHOOK_RETRY_INTERVAL_SECONDS must be a number"
+        ) from exc
+    if webhook_retry_interval < 0 or (0 < webhook_retry_interval < 5) or webhook_retry_interval > 3600:
+        raise ValueError(
+            "MEDIAFORGE_WEBHOOK_RETRY_INTERVAL_SECONDS must be 0 or between 5 and 3600"
         )
     story_planner = build_story_planner_from_env()
     service = MediaForgeService(
@@ -774,6 +809,7 @@ def create_app(output_root: Path | None = None) -> FastAPI:
         "running": False,
         "last_error": None,
     }
+    app.state.webhook_retry_interval_seconds = webhook_retry_interval
 
     @app.exception_handler(QuotaViolation)
     async def quota_violation_handler(_request: Request, exc: QuotaViolation):

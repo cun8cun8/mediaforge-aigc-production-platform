@@ -492,6 +492,47 @@ def test_http_delivery_dispatch_sends_signed_package(tmp_path: Path) -> None:
     assert received[0]["sha256"] == result.package_sha256
 
 
+def test_http_delivery_does_not_follow_redirects(tmp_path: Path) -> None:
+    requested_paths: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_args) -> None:
+            return
+
+        def do_POST(self) -> None:
+            requested_paths.append(self.path)
+            self.send_response(307)
+            self.send_header("Location", f"http://127.0.0.1:{server.server_port}/redirected")
+            self.end_headers()
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        package = tmp_path / "delivery.zip"
+        package.write_bytes(b"redirect-package")
+        with pytest.raises(DeliveryDispatchError, match="HTTP delivery failed"):
+            DeliveryDispatcher(
+                tmp_path / "artifacts",
+                mode="http",
+                secret="delivery-secret",
+                retries=0,
+            ).dispatch(
+                package,
+                project_id="redirect_project",
+                release_id="release_003",
+                channel="remote",
+                recipient="ops",
+                destination_uri=f"http://127.0.0.1:{server.server_port}/upload",
+            )
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+        server.server_close()
+
+    assert requested_paths == ["/upload"]
+
+
 def test_delivery_targets_are_bounded_by_explicit_policy(tmp_path: Path) -> None:
     package = tmp_path / "delivery.zip"
     package.write_bytes(b"bounded-package")

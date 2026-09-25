@@ -535,6 +535,8 @@ Token；工作台已使用带认证的 Fetch 流式读取、游标续传和断�
 回滚已经持久化的项目操作，失败事件会保留在 artifact 根目录的
 `webhook-outbox.json`，服务重启后自动重放；失败次数、待投递数和最近错误可通过
 `/webhooks/status` 查看。
+API 运行期间也会按 `MEDIAFORGE_WEBHOOK_RETRY_INTERVAL_SECONDS`（默认 30 秒）重试持久化
+失败事件；设置为 `0` 可关闭后台重试，但生产环境不建议关闭。
 
 审计记录采用项目内顺序哈希链：每条新事件承诺前一事件摘要、操作者、动作、消息、
 详情、镜头、追踪标识和时间。`GET /projects/{id}/audit` 返回 `integrity`，
