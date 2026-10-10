@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import math
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -66,6 +67,8 @@ def sign_provider_probe_receipt(
 
 
 def _parse_created_at(value: Any, *, now: datetime, max_age_hours: float) -> float:
+    if not math.isfinite(max_age_hours) or max_age_hours <= 0:
+        raise ProviderProbeReceiptError("Provider probe maximum age must be finite and greater than zero")
     if not isinstance(value, str) or not value.strip():
         raise ProviderProbeReceiptError("Provider probe receipt creation time is missing")
     try:
@@ -129,8 +132,8 @@ def validate_provider_probe_receipt(
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Validate one receipt and return only safe, release-relevant metadata."""
-    if max_age_hours <= 0:
-        raise ProviderProbeReceiptError("Provider probe maximum age must be greater than zero")
+    if not math.isfinite(max_age_hours) or max_age_hours <= 0:
+        raise ProviderProbeReceiptError("Provider probe maximum age must be finite and greater than zero")
     secret = secret.strip()
     if len(secret) < 32:
         raise ProviderProbeReceiptError(
