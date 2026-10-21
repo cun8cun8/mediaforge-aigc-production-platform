@@ -31,7 +31,7 @@ enterprise = [
 ]
 
 observability = [
-  "langfuse>=4.7,<5",
+  "langfuse>=4.7,<6",
 ]
 
 temporal = [
