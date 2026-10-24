@@ -43,7 +43,7 @@ jobs:
       MODE: ${{ inputs.mode }}
     steps:
       - uses: actions/checkout@v4
-      - uses: azure/setup-kubectl@v4
+      - uses: azure/setup-kubectl@v5
       - name: Configure protected cluster access
         run: |
           if [ -z "$KUBE_CONFIG_DATA" ]; then
